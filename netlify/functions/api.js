@@ -963,6 +963,43 @@ async function handleDebugSession(token) {
     results.startStreamNoAuthVersion = { status: r7.status, body: t7.substring(0, 500) };
   } catch (e) { results.startStreamNoAuthVersion = { error: e.message }; }
 
+  // Test 8: Session v3 with Auth-Version: 1
+  try {
+    const r8 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
+      method: 'GET',
+      headers: { ...arloAuthHeaders(), 'Authorization': token, 'Auth-Version': '1' }
+    });
+    const t8 = await r8.text();
+    results.sessionV3AuthV1 = { status: r8.status, body: t8.substring(0, 500) };
+  } catch (e) { results.sessionV3AuthV1 = { error: e.message }; }
+
+  // Test 9: startStream with Auth-Version: 1
+  try {
+    const r9 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
+      method: 'POST',
+      headers: { ...arloAuthHeaders(), 'Authorization': token, 'Auth-Version': '1', 'xcloudId': 'MNHQP6N-2320-140-157366091' },
+      body: JSON.stringify({
+        from: 'GHFJTR-140-163814971_web', to: '5CX3977XA02A8',
+        action: 'set', resource: 'cameras/A0M19775A230C',
+        transId: `node!${Date.now()}`,
+        publishResponse: true, responseUrl: '',
+        properties: { activityState: 'startUserStream', cameraId: 'A0M19775A230C' }
+      })
+    });
+    const t9 = await r9.text();
+    results.startStreamAuthV1 = { status: r9.status, body: t9.substring(0, 500) };
+  } catch (e) { results.startStreamAuthV1 = { error: e.message }; }
+
+  // Test 10: Session v2
+  try {
+    const r10 = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
+      method: 'GET',
+      headers: getAuthHeaders(token)
+    });
+    const t10 = await r10.text();
+    results.sessionV2 = { status: r10.status, body: t10.substring(0, 500) };
+  } catch (e) { results.sessionV2 = { error: e.message }; }
+
   return jsonResponse({ success: true, results, tokenLength: token.length, tokenStart: token.substring(0, 20) });
 }
 
