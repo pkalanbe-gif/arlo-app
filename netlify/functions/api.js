@@ -68,7 +68,11 @@ async function handleLogin(body) {
     const authData = await authRes.json();
 
     if (!authRes.ok || !authData.data) {
-      return errorResponse(authData.message || 'Login echwe. Verifye email/password ou.', 401);
+      // Return 200 with success:false so frontend 401-interceptor doesn't interfere
+      return jsonResponse({
+        success: false,
+        error: authData.message || 'Login echwe. Verifye email/password ou.'
+      });
     }
 
     // Check if 2FA is required
@@ -120,7 +124,7 @@ async function handleVerify2FA(body) {
     const data = await res.json();
 
     if (!res.ok || !data.data) {
-      return errorResponse('Kòd 2FA pa bon', 401);
+      return jsonResponse({ success: false, error: 'Kòd 2FA pa bon' });
     }
 
     const newToken = data.data.token || token;

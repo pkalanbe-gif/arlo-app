@@ -19,11 +19,13 @@ api.interceptors.request.use(config => {
   return config;
 });
 
-// Handle auth errors
+// Handle auth errors (skip for login/verify endpoints)
 api.interceptors.response.use(
   res => res,
   err => {
-    if (err.response?.status === 401) {
+    const url = err.config?.url || '';
+    const isAuthEndpoint = url.includes('/login') || url.includes('/verify-2fa');
+    if (err.response?.status === 401 && !isAuthEndpoint) {
       localStorage.removeItem('arlo_token');
       localStorage.removeItem('arlo_user');
       window.location.href = '/login';

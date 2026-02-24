@@ -22,6 +22,11 @@ export function ArloProvider({ children }) {
     setError(null);
     try {
       const result = await api.login(email, password);
+      // Check if login failed (200 with success:false)
+      if (result.success === false) {
+        setError(result.error || 'Login echwe');
+        return result;
+      }
       if (result.success && result.step === 'done') {
         setToken(result.token);
         setUserId(result.userId);
@@ -30,7 +35,7 @@ export function ArloProvider({ children }) {
       }
       return result;
     } catch (err) {
-      const msg = err.response?.data?.error || 'Erè koneksyon';
+      const msg = err.response?.data?.error || err.message || 'Erè koneksyon';
       setError(msg);
       throw new Error(msg);
     } finally {
