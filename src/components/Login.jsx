@@ -4,24 +4,11 @@ import { useArlo } from '../context/ArloContext';
 export default function Login() {
   const { login, getFactors, startAuth, finishAuth, loading, error, setError } = useArlo();
 
-  // Auth state
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [step, setStep] = useState('login'); // 'login' | 'factors' | 'otp'
 
-  // Refs to read DOM values directly (fixes browser autofill not triggering onChange)
+  // Uncontrolled refs — lets browser autofill work freely
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
-
-  // Sync autofilled DOM values into React state
-  const syncAutofill = () => {
-    if (emailRef.current && emailRef.current.value && !email) {
-      setEmail(emailRef.current.value);
-    }
-    if (passwordRef.current && passwordRef.current.value && !password) {
-      setPassword(passwordRef.current.value);
-    }
-  };
 
   // 2FA state
   const [tempToken, setTempToken] = useState(null);
@@ -35,9 +22,9 @@ export default function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
 
-    // Read DOM values directly as fallback for browser autofill
-    const emailVal = email || emailRef.current?.value || '';
-    const passwordVal = password || passwordRef.current?.value || '';
+    // Always read from DOM directly (uncontrolled inputs)
+    const emailVal = emailRef.current?.value?.trim() || '';
+    const passwordVal = passwordRef.current?.value || '';
 
     console.log('[Login] handleLogin called, email:', emailVal.length, 'chars, password:', passwordVal.length, 'chars');
 
@@ -47,26 +34,19 @@ export default function Login() {
     }
     setError(null);
 
-    // Sync React state with DOM values
-    if (!email && emailVal) setEmail(emailVal);
-    if (!password && passwordVal) setPassword(passwordVal);
-
     const result = await login(emailVal, passwordVal);
     console.log('[Login] login result:', JSON.stringify(result));
     if (!result || result.success === false) return;
 
     if (result.step === 'done') {
-      // Fully authenticated
       return;
     }
 
     if (result.step === '2fa-factors') {
-      // Need 2FA
       console.log('[Login] 2FA required');
       setTempToken(result.token);
       setTempUserId(result.userId);
 
-      // Check if factors came with login response (inline)
       if (result.factors && result.factors.length > 0) {
         console.log('[Login] Factors from login response:', result.factors.length);
         setFactors(result.factors);
@@ -74,7 +54,6 @@ export default function Login() {
         return;
       }
 
-      // Fallback: fetch factors separately
       console.log('[Login] Fetching factors separately...');
       const factorResult = await getFactors(result.token, result.userId);
       console.log('[Login] getFactors result:', JSON.stringify(factorResult));
@@ -110,7 +89,6 @@ export default function Login() {
     setError(null);
 
     await finishAuth(tempToken, factorAuthCode, otp);
-    // If successful, ArloContext sets token and redirects
   };
 
   // ─── Step: Factor Selection ───
@@ -209,7 +187,7 @@ export default function Login() {
     );
   }
 
-  // ─── Step: Login Form ───
+  // ─── Step: Login Form (UNCONTROLLED inputs for autofill compatibility) ───
   return (
     <div className="login-page">
       <div className="login-logo">📷</div>
@@ -225,11 +203,8 @@ export default function Login() {
             ref={emailRef}
             type="email"
             placeholder="email@example.com"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            onFocus={syncAutofill}
-            onAnimationStart={syncAutofill}
             autoComplete="email"
+            name="email"
           />
         </div>
 
@@ -239,11 +214,8 @@ export default function Login() {
             ref={passwordRef}
             type="password"
             placeholder="••••••••"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onFocus={syncAutofill}
-            onAnimationStart={syncAutofill}
             autoComplete="current-password"
+            name="password"
           />
         </div>
 
