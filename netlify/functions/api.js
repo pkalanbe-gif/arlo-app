@@ -343,8 +343,19 @@ export default async function handler(req) {
   }
 
   const url = new URL(req.url);
-  const path = url.pathname.replace('/.netlify/functions/api', '').replace('/api', '') || '/';
+  const rawPath = url.pathname;
+
+  // Robust path parsing — works with both redirect and direct routing
+  const path = rawPath
+    .replace(/^\/?\.netlify\/functions\/api/, '')
+    .replace(/^\/api/, '')
+    .replace(/\/$/, '')
+    || '/';
+
   const method = req.method;
+
+  // Debug: log routing info
+  console.log(`[Arlo API] ${method} ${rawPath} → path: "${path}"`);
 
   // Extract token from header
   const token = req.headers.get('x-arlo-token') || req.headers.get('authorization');
@@ -371,6 +382,7 @@ export default async function handler(req) {
 
     // Auth routes (no token needed)
     if (path === '/login' && method === 'POST') {
+      console.log('[Arlo API] Login attempt for:', body.email);
       return handleLogin(body);
     }
     if (path === '/verify-2fa' && method === 'POST') {
@@ -412,10 +424,7 @@ export default async function handler(req) {
     return errorResponse('Route pa egziste: ' + path, 404);
 
   } catch (err) {
+    console.error('[Arlo API] Error:', err.message);
     return errorResponse('Erè entèn: ' + err.message, 500);
   }
 }
-
-export const config = {
-  path: "/api/*"
-};

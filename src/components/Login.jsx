@@ -12,16 +12,21 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (!email || !password) {
+      setError('Mete email ak password ou');
+      return;
+    }
     setError(null);
     try {
       const result = await login(email, password);
-      if (result.step === '2fa') {
+      if (result && result.step === '2fa') {
         setStep('2fa');
         setTempToken(result.token);
         setFactorId(result.factorId);
       }
     } catch (err) {
-      // Error already set in context
+      // Error set in context, add fallback just in case
+      console.error('Login error:', err);
     }
   };
 
