@@ -13,18 +13,83 @@ export function ArloProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Check if logged in
   const isLoggedIn = !!token;
 
-  // Login
+  // ─── Step 1: Login (email/password → get temp token) ───
   const login = async (email, password) => {
     setLoading(true);
     setError(null);
     try {
       const result = await api.login(email, password);
-      // Check if login failed (200 with success:false)
       if (result.success === false) {
         setError(result.error || 'Login echwe');
+        return result;
+      }
+      // If fully authenticated (rare, usually needs 2FA)
+      if (result.success && result.step === 'done') {
+        setToken(result.token);
+        setUserId(result.userId);
+        localStorage.setItem('arlo_token', result.token);
+        localStorage.setItem('arlo_user', result.userId);
+      }
+      return result;
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Erè koneksyon';
+      setError(msg);
+      return { success: false, error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Step 2: Get 2FA factors ───
+  const getFactors = async (tempToken, tempUserId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getFactors(tempToken, tempUserId);
+      if (result.success === false) {
+        setError(result.error || 'Pa ka jwenn opsyon verifikasyon');
+        return result;
+      }
+      return result;
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Erè koneksyon';
+      setError(msg);
+      return { success: false, error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Step 3: Start 2FA (send code) ───
+  const startAuth = async (tempToken, factorId, tempUserId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.startAuth(tempToken, factorId, tempUserId);
+      if (result.success === false) {
+        setError(result.error || 'Pa ka voye kòd verifikasyon');
+        return result;
+      }
+      return result;
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Erè koneksyon';
+      setError(msg);
+      return { success: false, error: msg };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Step 4: Finish 2FA (validate OTP) ───
+  const finishAuth = async (tempToken, factorAuthCode, otp) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.finishAuth(tempToken, factorAuthCode, otp);
+      if (result.success === false) {
+        setError(result.error || 'Kòd verifikasyon pa bon');
         return result;
       }
       if (result.success && result.step === 'done') {
@@ -37,29 +102,7 @@ export function ArloProvider({ children }) {
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Erè koneksyon';
       setError(msg);
-      throw new Error(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Verify 2FA
-  const verify2FA = async (tempToken, otp, factorId) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.verify2FA(tempToken, otp, factorId);
-      if (result.success && result.step === 'done') {
-        setToken(result.token);
-        setUserId(result.userId);
-        localStorage.setItem('arlo_token', result.token);
-        localStorage.setItem('arlo_user', result.userId);
-      }
-      return result;
-    } catch (err) {
-      const msg = err.response?.data?.error || 'Kòd 2FA pa bon';
-      setError(msg);
-      throw new Error(msg);
+      return { success: false, error: msg };
     } finally {
       setLoading(false);
     }
@@ -146,7 +189,7 @@ export function ArloProvider({ children }) {
     token, userId, isLoggedIn,
     devices, cameras, baseStations, currentMode,
     loading, error,
-    login, verify2FA, logout,
+    login, getFactors, startAuth, finishAuth, logout,
     loadDevices, changeMode,
     takeSnapshot, startStream, getLibrary,
     setError
