@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useArlo } from '../context/ArloContext';
 
 export default function Login() {
@@ -8,6 +8,20 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [step, setStep] = useState('login'); // 'login' | 'factors' | 'otp'
+
+  // Refs to read DOM values directly (fixes browser autofill not triggering onChange)
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+
+  // Sync autofilled DOM values into React state
+  const syncAutofill = () => {
+    if (emailRef.current && emailRef.current.value && !email) {
+      setEmail(emailRef.current.value);
+    }
+    if (passwordRef.current && passwordRef.current.value && !password) {
+      setPassword(passwordRef.current.value);
+    }
+  };
 
   // 2FA state
   const [tempToken, setTempToken] = useState(null);
@@ -20,13 +34,24 @@ export default function Login() {
   // ─── Step 1: Login with email/password ───
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
+
+    // Read DOM values directly as fallback for browser autofill
+    const emailVal = email || emailRef.current?.value || '';
+    const passwordVal = password || passwordRef.current?.value || '';
+
+    console.log('[Login] handleLogin called, email:', emailVal.length, 'chars, password:', passwordVal.length, 'chars');
+
+    if (!emailVal || !passwordVal) {
       setError('Mete email ak password ou');
       return;
     }
     setError(null);
 
-    const result = await login(email, password);
+    // Sync React state with DOM values
+    if (!email && emailVal) setEmail(emailVal);
+    if (!password && passwordVal) setPassword(passwordVal);
+
+    const result = await login(emailVal, passwordVal);
     console.log('[Login] login result:', JSON.stringify(result));
     if (!result || result.success === false) return;
 
@@ -197,10 +222,13 @@ export default function Login() {
         <div className="input-group">
           <label>Email</label>
           <input
+            ref={emailRef}
             type="email"
             placeholder="email@example.com"
             value={email}
             onChange={e => setEmail(e.target.value)}
+            onFocus={syncAutofill}
+            onAnimationStart={syncAutofill}
             autoComplete="email"
             required
           />
@@ -209,10 +237,13 @@ export default function Login() {
         <div className="input-group">
           <label>Password</label>
           <input
+            ref={passwordRef}
             type="password"
             placeholder="••••••••"
             value={password}
             onChange={e => setPassword(e.target.value)}
+            onFocus={syncAutofill}
+            onAnimationStart={syncAutofill}
             autoComplete="current-password"
             required
           />
