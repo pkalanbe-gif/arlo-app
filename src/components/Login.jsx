@@ -27,22 +27,29 @@ export default function Login() {
     setError(null);
 
     const result = await login(email, password);
+    console.log('[Login] login result:', JSON.stringify(result));
     if (!result || result.success === false) return;
 
     if (result.step === 'done') {
-      // Fully authenticated (rare)
+      // Fully authenticated
       return;
     }
 
     if (result.step === '2fa-factors') {
       // Need 2FA — get factors
+      console.log('[Login] 2FA required, getting factors...');
       setTempToken(result.token);
       setTempUserId(result.userId);
 
       const factorResult = await getFactors(result.token, result.userId);
+      console.log('[Login] getFactors result:', JSON.stringify(factorResult));
       if (factorResult && factorResult.success && factorResult.factors) {
         setFactors(factorResult.factors);
         setStep('factors');
+      } else {
+        // getFactors failed — show error
+        console.error('[Login] getFactors failed:', factorResult);
+        setError(factorResult?.error || 'Pa ka jwenn opsyon verifikasyon. Eseye ankò.');
       }
     }
   };
