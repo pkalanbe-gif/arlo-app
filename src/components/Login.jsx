@@ -36,18 +36,27 @@ export default function Login() {
     }
 
     if (result.step === '2fa-factors') {
-      // Need 2FA — get factors
-      console.log('[Login] 2FA required, getting factors...');
+      // Need 2FA
+      console.log('[Login] 2FA required');
       setTempToken(result.token);
       setTempUserId(result.userId);
 
+      // Check if factors came with login response (inline)
+      if (result.factors && result.factors.length > 0) {
+        console.log('[Login] Factors from login response:', result.factors.length);
+        setFactors(result.factors);
+        setStep('factors');
+        return;
+      }
+
+      // Fallback: fetch factors separately
+      console.log('[Login] Fetching factors separately...');
       const factorResult = await getFactors(result.token, result.userId);
       console.log('[Login] getFactors result:', JSON.stringify(factorResult));
       if (factorResult && factorResult.success && factorResult.factors) {
         setFactors(factorResult.factors);
         setStep('factors');
       } else {
-        // getFactors failed — show error
         console.error('[Login] getFactors failed:', factorResult);
         setError(factorResult?.error || 'Pa ka jwenn opsyon verifikasyon. Eseye ankò.');
       }

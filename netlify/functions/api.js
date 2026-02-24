@@ -186,7 +186,39 @@ async function handleLogin(body) {
       });
     }
 
-    // 2FA required — even if authenticated is a timestamp, new devices need 2FA
+    // 2FA required — fetch factors immediately so frontend gets them in one call
+    console.log(`[Arlo API] 2FA required, fetching factors inline...`);
+    const token64 = Buffer.from(token).toString('base64');
+    try {
+      const factorsRes = await arloFetch(`${ARLO_AUTH_HOST}/api/getFactors?data=${Date.now()}`, {
+        method: 'GET',
+        headers: { 'Authorization': token64 }
+      });
+      const factorsData = await factorsRes.json();
+      console.log(`[Arlo API] Inline getFactors status: ${factorsRes.status}`);
+      console.log(`[Arlo API] Inline getFactors body: ${JSON.stringify(factorsData).substring(0, 500)}`);
+
+      if (factorsData.data && factorsData.data.items) {
+        const factors = factorsData.data.items.map(f => ({
+          factorId: f.factorId,
+          factorType: f.factorType,
+          displayName: f.displayName || f.factorType,
+          factorRole: f.factorRole
+        }));
+        return jsonResponse({
+          success: true,
+          step: '2fa-factors',
+          token,
+          userId,
+          factors,
+          message: 'Bezwen verifikasyon 2FA. Chwazi kòman resevwa kòd la.'
+        });
+      }
+    } catch (factorErr) {
+      console.error('[Arlo API] Inline getFactors error:', factorErr.message);
+    }
+
+    // Fallback: return without factors, frontend will call get-factors separately
     return jsonResponse({
       success: true,
       step: '2fa-factors',
