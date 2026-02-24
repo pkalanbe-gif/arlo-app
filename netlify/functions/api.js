@@ -36,13 +36,58 @@ async function arloFetch(url, options = {}) {
   return res;
 }
 
-// ─── Helper: Get auth headers with token ───
+// ─── Helper: Get auth headers with token (for ocapi-app.arlo.com — token is base64) ───
+function getAuthHeadersBase64(token) {
+  const token64 = Buffer.from(token).toString('base64');
+  return {
+    ...arloAuthHeaders(),
+    'Authorization': token64
+  };
+}
+
+// ─── Helper: Get headers for regular API (myapi.arlo.com — token is plain) ───
 function getAuthHeaders(token) {
   return {
     ...arloAuthHeaders(),
     'Authorization': token,
+    'Auth-Version': '2',
     'schemaVersion': '1'
   };
+}
+
+// ─── Helper: Validate token + create session ───
+async function validateAndCreateSession(token) {
+  // Step 1: Validate the access token
+  console.log('[Arlo API] Validating access token...');
+  const validateRes = await arloFetch(`${ARLO_AUTH_HOST}/api/validateAccessToken?data=${Date.now()}`, {
+    method: 'GET',
+    headers: { 'Authorization': Buffer.from(token).toString('base64') }
+  });
+  const validateText = await validateRes.text();
+  console.log(`[Arlo API] validateToken status: ${validateRes.status}`);
+  console.log(`[Arlo API] validateToken body: ${validateText.substring(0, 300)}`);
+
+  if (validateRes.status !== 200) {
+    console.error('[Arlo API] Token validation failed');
+    return { success: false, error: 'Token validation failed' };
+  }
+
+  // Step 2: Create v2 session
+  console.log('[Arlo API] Creating v2 session...');
+  const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
+    method: 'GET',
+    headers: getAuthHeaders(token)
+  });
+  const sessionText = await sessionRes.text();
+  console.log(`[Arlo API] Session status: ${sessionRes.status}`);
+  console.log(`[Arlo API] Session body: ${sessionText.substring(0, 300)}`);
+
+  if (sessionRes.status !== 200) {
+    console.error('[Arlo API] Session creation failed');
+    return { success: false, error: 'Session creation failed' };
+  }
+
+  return { success: true };
 }
 
 // ─── CORS Headers ───
@@ -127,7 +172,16 @@ async function handleLogin(body) {
       });
     }
 
-    // Fully authenticated (rare - usually 2FA required)
+    // Fully authenticated — validate token and create session
+    console.log(`[Arlo API] Authenticated=${authenticated}, validating token...`);
+    const validation = await validateAndCreateSession(token);
+    if (!validation.success) {
+      return jsonResponse({
+        success: false,
+        error: 'Token validation echwe. Eseye ankò.'
+      });
+    }
+
     sessions[userId] = { token, email, loginTime: Date.now() };
     return jsonResponse({
       success: true,
@@ -150,9 +204,10 @@ async function handleGetFactors(body) {
   }
 
   try {
+    const token64 = Buffer.from(token).toString('base64');
     const res = await arloFetch(`${ARLO_AUTH_HOST}/api/getFactors?data=${Date.now()}`, {
       method: 'GET',
-      headers: { 'Authorization': token }
+      headers: { 'Authorization': token64 }
     });
 
     const data = await res.json();
@@ -192,9 +247,10 @@ async function handleStartAuth(body) {
   }
 
   try {
+    const token64 = Buffer.from(token).toString('base64');
     const res = await arloFetch(`${ARLO_AUTH_HOST}/api/startAuth`, {
       method: 'POST',
-      headers: { 'Authorization': token },
+      headers: { 'Authorization': token64 },
       body: JSON.stringify({ factorId })
     });
 
@@ -228,9 +284,10 @@ async function handleFinishAuth(body) {
   }
 
   try {
+    const token64 = Buffer.from(token).toString('base64');
     const res = await arloFetch(`${ARLO_AUTH_HOST}/api/finishAuth`, {
       method: 'POST',
-      headers: { 'Authorization': token },
+      headers: { 'Authorization': token64 },
       body: JSON.stringify({
         factorAuthCode,
         otp,
@@ -252,13 +309,15 @@ async function handleFinishAuth(body) {
     const finalToken = data.data.token;
     const userId = data.data.userId;
 
-    // Validate the token
-    const validateRes = await arloFetch(`${ARLO_AUTH_HOST}/api/validateAccessToken?data=${Date.now()}`, {
-      method: 'GET',
-      headers: { 'Authorization': finalToken }
-    });
-    const validateData = await validateRes.json();
-    console.log(`[Arlo API] validateToken status: ${validateRes.status}`);
+    // Validate token and create session
+    console.log(`[Arlo API] 2FA done, validating token and creating session...`);
+    const validation = await validateAndCreateSession(finalToken);
+    if (!validation.success) {
+      return jsonResponse({
+        success: false,
+        error: 'Token validation echwe apre 2FA. Eseye ankò.'
+      });
+    }
 
     sessions[userId] = { token: finalToken, loginTime: Date.now() };
 
@@ -279,7 +338,7 @@ async function handleFinishAuth(body) {
 async function handleGetDevices(token) {
   try {
     console.log(`[Arlo API] Getting devices with token: ${token.substring(0, 30)}...`);
-    const res = await arloFetch(`${ARLO_BASE}/v2/users/devices`, {
+    const res = await arloFetch(`${ARLO_BASE}/v2/users/devices?t=${Date.now()}`, {
       method: 'GET',
       headers: getAuthHeaders(token)
     });
@@ -293,8 +352,20 @@ async function handleGetDevices(token) {
       return errorResponse('Arlo retounen repons ki pa JSON pou devices', 500);
     }
 
-    if (!data.data) {
-      return errorResponse(data.message || data.meta?.message || 'Pa ka jwenn aparèy yo', 500);
+    if (!data.data || data.success === false) {
+      const errMsg = data.data?.message || data.data?.reason || data.message || data.meta?.message || 'Pa ka jwenn aparèy yo';
+      console.error(`[Arlo API] Devices error: ${errMsg}`);
+      // If invalid token, tell frontend to re-login
+      if (data.data?.error === '2015' || data.data?.reason === 'Invalid Token') {
+        return errorResponse('Sesyon ekspire. Tanpri konekte ankò.', 401);
+      }
+      return errorResponse(errMsg, 500);
+    }
+
+    // Make sure data.data is an array
+    if (!Array.isArray(data.data)) {
+      console.error(`[Arlo API] Devices data is not array: ${typeof data.data}`);
+      return errorResponse('Repons aparèy pa bon. Eseye ankò.', 500);
     }
 
     const devices = data.data.map(d => ({
