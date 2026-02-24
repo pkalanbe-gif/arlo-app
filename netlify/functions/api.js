@@ -160,35 +160,39 @@ async function handleLogin(body) {
     const token = authData.data.token;
     const userId = authData.data.userId;
     const authenticated = authData.data.authenticated;
+    const authCompleted = authData.data.authCompleted;
 
-    // Check if 2FA is required (authenticated === 0 means needs 2FA)
-    if (authenticated === 0 || !authenticated) {
+    console.log(`[Arlo API] authenticated=${authenticated}, authCompleted=${authCompleted}`);
+
+    // Check if auth is fully completed (trusted device, no 2FA needed)
+    if (authCompleted === true) {
+      // Validate token and create session
+      console.log(`[Arlo API] Auth completed, validating token...`);
+      const validation = await validateAndCreateSession(token);
+      if (!validation.success) {
+        return jsonResponse({
+          success: false,
+          error: 'Token validation echwe. Eseye ankò.'
+        });
+      }
+
+      sessions[userId] = { token, email, loginTime: Date.now() };
       return jsonResponse({
         success: true,
-        step: '2fa-factors',
+        step: 'done',
         token,
         userId,
-        message: 'Bezwen verifikasyon 2FA. Chwazi kòman resevwa kòd la.'
+        email
       });
     }
 
-    // Fully authenticated — validate token and create session
-    console.log(`[Arlo API] Authenticated=${authenticated}, validating token...`);
-    const validation = await validateAndCreateSession(token);
-    if (!validation.success) {
-      return jsonResponse({
-        success: false,
-        error: 'Token validation echwe. Eseye ankò.'
-      });
-    }
-
-    sessions[userId] = { token, email, loginTime: Date.now() };
+    // 2FA required — even if authenticated is a timestamp, new devices need 2FA
     return jsonResponse({
       success: true,
-      step: 'done',
+      step: '2fa-factors',
       token,
       userId,
-      email
+      message: 'Bezwen verifikasyon 2FA. Chwazi kòman resevwa kòd la.'
     });
   } catch (err) {
     console.error('[Arlo API] Login error:', err.message);
