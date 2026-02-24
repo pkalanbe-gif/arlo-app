@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useArlo } from '../context/ArloContext';
 
@@ -12,9 +12,12 @@ export default function CameraView() {
   const parentStation = baseStations.find(bs => bs.deviceId === camera?.parentId);
 
   const [streamUrl, setStreamUrl] = useState(null);
+  const [streamType, setStreamType] = useState(null);
   const [snapshotUrl, setSnapshotUrl] = useState(camera?.properties?.lastImageUrl || null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [loadingAction, setLoadingAction] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [statusMsg, setStatusMsg] = useState(null);
 
   if (!camera) {
     return (
@@ -29,35 +32,81 @@ export default function CameraView() {
   }
 
   const handleSnapshot = async () => {
-    if (!parentStation) return;
+    if (!parentStation) {
+      setActionError('Baz stasyon pa jwenn. Retounen nan Dashboard epi rafrechi.');
+      return;
+    }
     setLoadingAction('snapshot');
+    setActionError(null);
+    setStatusMsg('Ap pran foto...');
     try {
+      console.log('[CameraView] Taking snapshot:', camera.deviceId, parentStation.deviceId, parentStation.xCloudId);
       const result = await takeSnapshot(camera.deviceId, parentStation.deviceId, parentStation.xCloudId);
+      console.log('[CameraView] Snapshot result:', JSON.stringify(result));
+
       if (result?.data?.url) {
         setSnapshotUrl(result.data.url);
+        setStatusMsg('Foto pran!');
+        setIsStreaming(false);
+        setStreamUrl(null);
+      } else {
+        setStatusMsg('Foto mande — li ka pran kèk segonn...');
+        // Even if no URL returned, the snapshot was requested.
+        // User can try again after a few seconds.
       }
+    } catch (err) {
+      console.error('[CameraView] Snapshot error:', err);
+      setActionError('Pa ka pran foto. Eseye ankò.');
     } finally {
       setLoadingAction(null);
+      setTimeout(() => setStatusMsg(null), 5000);
     }
   };
 
   const handleStream = async () => {
-    if (!parentStation) return;
+    if (!parentStation) {
+      setActionError('Baz stasyon pa jwenn. Retounen nan Dashboard epi rafrechi.');
+      return;
+    }
     setLoadingAction('stream');
+    setActionError(null);
+    setStatusMsg('Ap kòmanse stream...');
     try {
+      console.log('[CameraView] Starting stream:', camera.deviceId, parentStation.deviceId, parentStation.xCloudId);
       const result = await startStream(camera.deviceId, parentStation.deviceId, parentStation.xCloudId);
+      console.log('[CameraView] Stream result:', JSON.stringify(result));
+
       if (result?.url) {
-        setStreamUrl(result.url);
-        setIsStreaming(true);
+        const type = result.streamType || 'unknown';
+        setStreamType(type);
+        console.log('[CameraView] Stream type:', type, 'URL:', result.url);
+
+        if (type === 'rtsp') {
+          // RTSP cannot play in browser directly
+          setActionError('Stream RTSP pa ka jwe nan browser. Arlo retounen yon URL RTSP ki bezwen yon media player (VLC).');
+          setStatusMsg(null);
+        } else {
+          setStreamUrl(result.url);
+          setIsStreaming(true);
+          setStatusMsg('Stream aktif!');
+        }
+      } else {
+        setActionError('Arlo pa retounen URL stream. Kamera a petèt pa disponib kounye a.');
       }
+    } catch (err) {
+      console.error('[CameraView] Stream error:', err);
+      setActionError('Pa ka kòmanse stream. Eseye ankò.');
     } finally {
       setLoadingAction(null);
+      setTimeout(() => setStatusMsg(null), 5000);
     }
   };
 
   const handleStopStream = () => {
     setStreamUrl(null);
+    setStreamType(null);
     setIsStreaming(false);
+    setStatusMsg(null);
   };
 
   const isOnline = camera.state?.connectionState === 'available';
@@ -77,35 +126,69 @@ export default function CameraView() {
 
       {/* Stream / Preview */}
       <div className="camera-stream">
-        {isStreaming && streamUrl ? (
+        {loadingAction && (
+          <div className="stream-placeholder">
+            <div className="spinner"></div>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '12px' }}>
+              {loadingAction === 'snapshot' ? 'Ap pran foto...' : 'Ap kòmanse stream...'}
+            </p>
+          </div>
+        )}
+
+        {!loadingAction && isStreaming && streamUrl ? (
           <video
             src={streamUrl}
             autoPlay
             playsInline
             muted
             controls
-            style={{ width: '100%', height: '100%' }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            onError={(e) => {
+              console.error('[CameraView] Video playback error:', e);
+              setActionError('Pa ka jwe video stream la. Format la ka pa sipòte nan browser sa a.');
+              setIsStreaming(false);
+            }}
           />
-        ) : snapshotUrl ? (
-          <img src={snapshotUrl} alt={camera.deviceName} />
-        ) : (
+        ) : !loadingAction && snapshotUrl ? (
+          <img
+            src={snapshotUrl}
+            alt={camera.deviceName}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            onError={() => {
+              console.warn('[CameraView] Snapshot image failed to load');
+              setSnapshotUrl(null);
+            }}
+          />
+        ) : !loadingAction ? (
           <div className="stream-placeholder">
             <div className="big-icon">📹</div>
             <p style={{ color: 'var(--text-secondary)' }}>
-              {isOnline ? 'Klike pou wè kamera a' : 'Kamera offline'}
+              {isOnline ? 'Klike 📸 pou foto oswa ▶️ pou stream' : 'Kamera offline'}
             </p>
           </div>
-        )}
+        ) : null}
 
-        {isStreaming && <span className="live-badge" style={{ position: 'absolute', top: 12, left: 12 }}>● LIVE</span>}
+        {isStreaming && !loadingAction && <span className="live-badge" style={{ position: 'absolute', top: 12, left: 12 }}>● LIVE</span>}
       </div>
+
+      {/* Status / Error Messages */}
+      {(actionError || statusMsg) && (
+        <div style={{ padding: '8px 16px', textAlign: 'center' }}>
+          {actionError && (
+            <p style={{ color: '#ff6b6b', fontSize: '13px', margin: '4px 0' }}>⚠️ {actionError}</p>
+          )}
+          {statusMsg && !actionError && (
+            <p style={{ color: 'var(--accent)', fontSize: '13px', margin: '4px 0' }}>{statusMsg}</p>
+          )}
+        </div>
+      )}
 
       {/* Controls */}
       <div className="camera-controls">
         <button
           className="control-btn"
           onClick={handleSnapshot}
-          disabled={!isOnline || loadingAction === 'snapshot'}
+          disabled={!isOnline || !!loadingAction}
           title="Pran Foto"
         >
           {loadingAction === 'snapshot' ? '⏳' : '📸'}
@@ -114,7 +197,7 @@ export default function CameraView() {
         <button
           className={`control-btn ${isStreaming ? 'record' : ''}`}
           onClick={isStreaming ? handleStopStream : handleStream}
-          disabled={!isOnline || loadingAction === 'stream'}
+          disabled={!isOnline || (!!loadingAction && loadingAction !== 'stream')}
           title={isStreaming ? 'Kanpe Stream' : 'Kòmanse Stream'}
         >
           {loadingAction === 'stream' ? '⏳' : isStreaming ? '⏹️' : '▶️'}
@@ -175,6 +258,13 @@ export default function CameraView() {
             {isOnline ? '🟢 Online' : '🔴 Offline'}
           </span>
         </div>
+
+        {parentStation && (
+          <div className="detail-row">
+            <span className="detail-label">Baz Stasyon</span>
+            <span className="detail-value">📡 {parentStation.deviceName}</span>
+          </div>
+        )}
       </div>
     </div>
   );

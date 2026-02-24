@@ -556,8 +556,16 @@ async function handleSetMode(token, body) {
 // ─── Route: Take Snapshot ───
 async function handleSnapshot(token, body) {
   const { deviceId, parentId, xCloudId } = body;
+  console.log(`[Arlo API] Snapshot request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}`);
+
+  if (!deviceId || !parentId || !xCloudId) {
+    return errorResponse('deviceId, parentId, ak xCloudId obligatwa pou snapshot', 400);
+  }
+
   try {
     const transId = `node!${Date.now()}`;
+
+    // Step 1: Request snapshot from base station
     const res = await arloFetch(`${ARLO_BASE}/users/devices/fullFrameSnapshot`, {
       method: 'POST',
       headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
@@ -567,9 +575,51 @@ async function handleSnapshot(token, body) {
         publishResponse: true, properties: { activityState: 'fullFrameSnapshot' }
       })
     });
-    const data = await res.json();
-    return jsonResponse({ success: true, data: data.data });
+
+    const dataText = await res.text();
+    console.log(`[Arlo API] Snapshot status: ${res.status}`);
+    console.log(`[Arlo API] Snapshot body: ${dataText.substring(0, 1000)}`);
+
+    let data;
+    try { data = JSON.parse(dataText); } catch (e) {
+      return errorResponse('Arlo retounen repons ki pa JSON pou snapshot', 500);
+    }
+
+    // The snapshot command is async - Arlo may not return the URL immediately.
+    // Try to get lastImageUrl from the device after a short delay.
+    if (!data.data?.url && !data.data?.presignedFullFrameSnapshotUrl) {
+      console.log('[Arlo API] No immediate snapshot URL, trying to get last image...');
+
+      // Wait a moment for the snapshot to be taken
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Fetch the device to get the latest image URL
+      const devRes = await arloFetch(`${ARLO_BASE}/users/devices?t=${Date.now()}`, {
+        method: 'GET',
+        headers: getAuthHeaders(token)
+      });
+      const devData = await devRes.json();
+
+      if (Array.isArray(devData.data)) {
+        const cam = devData.data.find(d => d.deviceId === deviceId);
+        const lastUrl = cam?.presignedLastImageUrl || cam?.lastImageUrl || cam?.properties?.lastImageUrl;
+        console.log(`[Arlo API] Device lastImageUrl: ${lastUrl ? lastUrl.substring(0, 100) + '...' : 'null'}`);
+
+        if (lastUrl) {
+          return jsonResponse({ success: true, data: { url: lastUrl } });
+        }
+      }
+    }
+
+    const snapshotUrl = data.data?.presignedFullFrameSnapshotUrl || data.data?.url || null;
+    console.log(`[Arlo API] Snapshot URL: ${snapshotUrl ? snapshotUrl.substring(0, 100) + '...' : 'null'}`);
+
+    return jsonResponse({
+      success: true,
+      data: { ...data.data, url: snapshotUrl }
+    });
   } catch (err) {
+    console.error('[Arlo API] Snapshot error:', err.message);
     return errorResponse('Erè snapshot: ' + err.message, 500);
   }
 }
@@ -577,6 +627,12 @@ async function handleSnapshot(token, body) {
 // ─── Route: Start Stream ───
 async function handleStream(token, body) {
   const { deviceId, parentId, xCloudId } = body;
+  console.log(`[Arlo API] Stream request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}`);
+
+  if (!deviceId || !parentId || !xCloudId) {
+    return errorResponse('deviceId, parentId, ak xCloudId obligatwa pou stream', 400);
+  }
+
   try {
     const transId = `node!${Date.now()}`;
     const res = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
@@ -589,9 +645,39 @@ async function handleStream(token, body) {
         properties: { activityState: 'startUserStream', cameraId: deviceId }
       })
     });
-    const data = await res.json();
-    return jsonResponse({ success: true, url: data.data?.url || null, data: data.data });
+
+    const dataText = await res.text();
+    console.log(`[Arlo API] Stream status: ${res.status}`);
+    console.log(`[Arlo API] Stream body: ${dataText.substring(0, 1000)}`);
+
+    let data;
+    try { data = JSON.parse(dataText); } catch (e) {
+      return errorResponse('Arlo retounen repons ki pa JSON pou stream', 500);
+    }
+
+    const streamUrl = data.data?.url || null;
+    console.log(`[Arlo API] Stream URL: ${streamUrl || 'null'}`);
+
+    // Detect stream type for the frontend
+    let streamType = 'unknown';
+    if (streamUrl) {
+      if (streamUrl.startsWith('rtsps://') || streamUrl.startsWith('rtsp://')) {
+        streamType = 'rtsp';
+      } else if (streamUrl.includes('.m3u8')) {
+        streamType = 'hls';
+      } else if (streamUrl.startsWith('https://')) {
+        streamType = 'https';
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      url: streamUrl,
+      streamType,
+      data: data.data
+    });
   } catch (err) {
+    console.error('[Arlo API] Stream error:', err.message);
     return errorResponse('Erè start stream: ' + err.message, 500);
   }
 }
