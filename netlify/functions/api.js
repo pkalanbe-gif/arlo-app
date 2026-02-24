@@ -72,26 +72,38 @@ async function validateAndCreateSession(token) {
     return { success: false, error: 'Token validation failed' };
   }
 
-  // Step 2: Create session — try v2, if it fails just proceed (token is already valid)
-  console.log('[Arlo API] Creating session...');
+  // Step 2: Create session v3 — try v3 first (pyaarlo uses v3)
+  console.log('[Arlo API] Creating session v3...');
+  let sessionData = null;
   try {
-    const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
+    const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
       method: 'GET',
       headers: getAuthHeaders(token)
     });
     const sessionText = await sessionRes.text();
-    console.log(`[Arlo API] Session status: ${sessionRes.status}`);
-    console.log(`[Arlo API] Session body: ${sessionText.substring(0, 300)}`);
+    console.log(`[Arlo API] Session v3 status: ${sessionRes.status}`);
+    console.log(`[Arlo API] Session v3 body: ${sessionText.substring(0, 500)}`);
 
-    if (sessionRes.status !== 200) {
-      // Session creation failed but token is validated — proceed anyway
-      console.warn('[Arlo API] Session creation failed, but token is valid. Proceeding...');
+    if (sessionRes.status === 200) {
+      try { sessionData = JSON.parse(sessionText); } catch (e) {}
+    } else {
+      console.warn('[Arlo API] Session v3 failed, trying v2...');
+      const sessionRes2 = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
+        method: 'GET',
+        headers: getAuthHeaders(token)
+      });
+      const sessionText2 = await sessionRes2.text();
+      console.log(`[Arlo API] Session v2 status: ${sessionRes2.status}`);
+      console.log(`[Arlo API] Session v2 body: ${sessionText2.substring(0, 500)}`);
+      if (sessionRes2.status === 200) {
+        try { sessionData = JSON.parse(sessionText2); } catch (e) {}
+      }
     }
   } catch (sessionErr) {
     console.warn('[Arlo API] Session creation error (non-fatal):', sessionErr.message);
   }
 
-  return { success: true };
+  return { success: true, sessionData };
 }
 
 // ─── CORS Headers ───
@@ -534,16 +546,17 @@ async function handleGetModes(token) {
 
 // ─── Route: Set Mode (Arm/Disarm) ───
 async function handleSetMode(token, body) {
-  const { deviceId, xCloudId, mode } = body;
+  const { deviceId, xCloudId, mode, userId } = body;
   try {
+    const webId = userId ? `${userId}_web` : `${deviceId}_web`;
     const transId = `node!${Date.now()}`;
     const res = await arloFetch(`${ARLO_BASE}/users/devices/automation/active`, {
       method: 'POST',
       headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
       body: JSON.stringify({
-        from: `${deviceId}_web`, to: deviceId,
+        from: webId, to: deviceId,
         action: 'set', resource: 'modes', transId,
-        publishResponse: true, properties: { active: mode }
+        publishResponse: true, responseUrl: '', properties: { active: mode }
       })
     });
     const data = await res.json();
@@ -555,8 +568,9 @@ async function handleSetMode(token, body) {
 
 // ─── Route: Take Snapshot ───
 async function handleSnapshot(token, body) {
-  const { deviceId, parentId, xCloudId } = body;
-  console.log(`[Arlo API] Snapshot request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}`);
+  const { deviceId, parentId, xCloudId, userId } = body;
+  const webId = userId ? `${userId}_web` : `${parentId}_web`;
+  console.log(`[Arlo API] Snapshot request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}, from=${webId}`);
 
   if (!deviceId || !parentId || !xCloudId) {
     return errorResponse('deviceId, parentId, ak xCloudId obligatwa pou snapshot', 400);
@@ -570,9 +584,10 @@ async function handleSnapshot(token, body) {
       method: 'POST',
       headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
       body: JSON.stringify({
-        from: `${parentId}_web`, to: parentId,
+        from: webId, to: parentId,
         action: 'set', resource: `cameras/${deviceId}`, transId,
-        publishResponse: true, properties: { activityState: 'fullFrameSnapshot' }
+        publishResponse: true, responseUrl: '',
+        properties: { activityState: 'fullFrameSnapshot' }
       })
     });
 
@@ -626,22 +641,47 @@ async function handleSnapshot(token, body) {
 
 // ─── Route: Start Stream ───
 async function handleStream(token, body) {
-  const { deviceId, parentId, xCloudId } = body;
-  console.log(`[Arlo API] Stream request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}`);
+  const { deviceId, parentId, xCloudId, userId } = body;
+  const webId = userId ? `${userId}_web` : `${parentId}_web`;
+  console.log(`[Arlo API] Stream request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}, from=${webId}`);
 
   if (!deviceId || !parentId || !xCloudId) {
     return errorResponse('deviceId, parentId, ak xCloudId obligatwa pou stream', 400);
   }
 
   try {
+    // Step 1: Open a brief SSE subscribe connection to register as a listener
+    // Arlo requires an active event stream before startStream will work
+    console.log('[Arlo API] Opening subscribe connection...');
+    const subscribeController = new AbortController();
+    const subscribeTimeout = setTimeout(() => subscribeController.abort(), 8000);
+
+    const subscribeFetch = fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+      headers: {
+        ...getAuthHeaders(token),
+        'Accept': 'text/event-stream'
+      },
+      signal: subscribeController.signal
+    }).catch(err => {
+      if (err.name !== 'AbortError') {
+        console.warn('[Arlo API] Subscribe error (non-fatal):', err.message);
+      }
+    });
+
+    // Wait for subscribe to register
+    await new Promise(r => setTimeout(r, 2000));
+    console.log('[Arlo API] Subscribe connection opened, sending startStream...');
+
+    // Step 2: Send startStream command
     const transId = `node!${Date.now()}`;
     const res = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
       method: 'POST',
       headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
       body: JSON.stringify({
-        from: `${parentId}_web`, to: parentId,
+        from: webId, to: parentId,
         action: 'set', resource: `cameras/${deviceId}`, transId,
-        publishResponse: true,
+        publishResponse: true, responseUrl: '',
         properties: { activityState: 'startUserStream', cameraId: deviceId }
       })
     });
@@ -650,9 +690,54 @@ async function handleStream(token, body) {
     console.log(`[Arlo API] Stream status: ${res.status}`);
     console.log(`[Arlo API] Stream body: ${dataText.substring(0, 1000)}`);
 
+    // Clean up subscribe connection
+    clearTimeout(subscribeTimeout);
+    subscribeController.abort();
+
     let data;
     try { data = JSON.parse(dataText); } catch (e) {
       return errorResponse('Arlo retounen repons ki pa JSON pou stream', 500);
+    }
+
+    // Check for Arlo error
+    if (data.data?.error || data.error) {
+      const errMsg = data.data?.message || data.data?.reason || data.message || 'Arlo erè stream';
+      const errCode = data.data?.error || data.error;
+      console.error(`[Arlo API] Stream Arlo error: code=${errCode}, msg=${errMsg}`);
+
+      // If subscribe+startStream failed, try the notify endpoint as fallback
+      console.log('[Arlo API] Trying notify endpoint as fallback...');
+      const notifyRes = await arloFetch(`${ARLO_BASE}/users/devices/notify/${parentId}`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+        body: JSON.stringify({
+          from: webId, to: parentId,
+          action: 'set', resource: `cameras/${deviceId}`,
+          transId: `node!${Date.now()}`,
+          publishResponse: true, responseUrl: '',
+          properties: { activityState: 'startUserStream', cameraId: deviceId }
+        })
+      });
+      const notifyText = await notifyRes.text();
+      console.log(`[Arlo API] Notify status: ${notifyRes.status}`);
+      console.log(`[Arlo API] Notify body: ${notifyText.substring(0, 1000)}`);
+
+      let notifyData;
+      try { notifyData = JSON.parse(notifyText); } catch (e) {
+        return errorResponse(`Stream echwe: ${errMsg}`, 500);
+      }
+
+      if (notifyData.data?.url) {
+        const nUrl = notifyData.data.url;
+        let nType = 'unknown';
+        if (nUrl.startsWith('rtsps://') || nUrl.startsWith('rtsp://')) nType = 'rtsp';
+        else if (nUrl.includes('.m3u8')) nType = 'hls';
+        else if (nUrl.startsWith('https://')) nType = 'https';
+
+        return jsonResponse({ success: true, url: nUrl, streamType: nType, data: notifyData.data, method: 'notify' });
+      }
+
+      return errorResponse(`Stream echwe: ${errMsg} (code: ${errCode})`, 500);
     }
 
     const streamUrl = data.data?.url || null;
@@ -674,7 +759,8 @@ async function handleStream(token, body) {
       success: true,
       url: streamUrl,
       streamType,
-      data: data.data
+      data: data.data,
+      method: 'startStream'
     });
   } catch (err) {
     console.error('[Arlo API] Stream error:', err.message);

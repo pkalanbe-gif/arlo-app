@@ -74,18 +74,21 @@ export async function getModes() {
 }
 
 export async function setMode(deviceId, xCloudId, mode) {
-  const { data } = await api.post('/mode', { deviceId, xCloudId, mode });
+  const userId = localStorage.getItem('arlo_user');
+  const { data } = await api.post('/mode', { deviceId, xCloudId, mode, userId });
   return data;
 }
 
 // ─── Camera ───
 export async function takeSnapshot(deviceId, parentId, xCloudId) {
-  const { data } = await api.post('/snapshot', { deviceId, parentId, xCloudId });
+  const userId = localStorage.getItem('arlo_user');
+  const { data } = await api.post('/snapshot', { deviceId, parentId, xCloudId, userId });
   return data;
 }
 
 export async function startStream(deviceId, parentId, xCloudId) {
-  const { data } = await api.post('/stream', { deviceId, parentId, xCloudId });
+  const userId = localStorage.getItem('arlo_user');
+  const { data } = await api.post('/stream', { deviceId, parentId, xCloudId, userId });
   return data;
 }
 
