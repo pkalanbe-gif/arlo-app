@@ -216,7 +216,7 @@ export default function Login() {
       <h1 className="login-title">Arlo Cam</h1>
       <p className="login-subtitle">Konekte ak kont Arlo ou pou kontwole kamera ou</p>
 
-      <form className="login-form" onSubmit={handleLogin}>
+      <form className="login-form" onSubmit={handleLogin} noValidate>
         {error && <div className="error-msg">{error}</div>}
 
         <div className="input-group">
@@ -230,7 +230,6 @@ export default function Login() {
             onFocus={syncAutofill}
             onAnimationStart={syncAutofill}
             autoComplete="email"
-            required
           />
         </div>
 
@@ -245,7 +244,6 @@ export default function Login() {
             onFocus={syncAutofill}
             onAnimationStart={syncAutofill}
             autoComplete="current-password"
-            required
           />
         </div>
 
