@@ -65,13 +65,28 @@ async function handleLogin(body) {
       body: JSON.stringify({ email, password, language: 'fr', EnvSource: 'prod' })
     });
 
-    const authData = await authRes.json();
+    const authText = await authRes.text();
+    console.log(`[Arlo API] Auth response status: ${authRes.status}`);
+    console.log(`[Arlo API] Auth response body: ${authText.substring(0, 500)}`);
+
+    let authData;
+    try {
+      authData = JSON.parse(authText);
+    } catch (e) {
+      return jsonResponse({
+        success: false,
+        error: `Arlo retounen yon repons ki pa JSON (status ${authRes.status})`,
+        debug: authText.substring(0, 200)
+      });
+    }
 
     if (!authRes.ok || !authData.data) {
       // Return 200 with success:false so frontend 401-interceptor doesn't interfere
       return jsonResponse({
         success: false,
-        error: authData.message || 'Login echwe. Verifye email/password ou.'
+        error: authData.message || authData.meta?.message || `Login echwe (${authRes.status}). Verifye email/password ou.`,
+        arloStatus: authRes.status,
+        arloMessage: authData.message || authData.meta?.message || null
       });
     }
 
