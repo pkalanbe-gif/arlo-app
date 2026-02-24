@@ -278,15 +278,23 @@ async function handleFinishAuth(body) {
 // ─── Route: Get Devices ───
 async function handleGetDevices(token) {
   try {
+    console.log(`[Arlo API] Getting devices with token: ${token.substring(0, 30)}...`);
     const res = await arloFetch(`${ARLO_BASE}/v2/users/devices`, {
       method: 'GET',
       headers: getAuthHeaders(token)
     });
 
-    const data = await res.json();
+    const dataText = await res.text();
+    console.log(`[Arlo API] Devices status: ${res.status}`);
+    console.log(`[Arlo API] Devices body: ${dataText.substring(0, 500)}`);
+
+    let data;
+    try { data = JSON.parse(dataText); } catch (e) {
+      return errorResponse('Arlo retounen repons ki pa JSON pou devices', 500);
+    }
 
     if (!data.data) {
-      return errorResponse('Pa ka jwenn aparèy yo', 500);
+      return errorResponse(data.message || data.meta?.message || 'Pa ka jwenn aparèy yo', 500);
     }
 
     const devices = data.data.map(d => ({
