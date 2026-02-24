@@ -83,7 +83,10 @@ export default function Dashboard() {
         <div className="empty-state">
           <div className="empty-icon">📷</div>
           <p className="empty-text">
-            {loading ? 'Ap chache kamera...' : 'Pa gen kamera konekte. Asire baz stasyon an online.'}
+            {loading ? 'Ap chache kamera...' : 'Pa gen kamera detekte nan kont ou.'}
+          </p>
+          <p className="empty-text" style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '8px', lineHeight: '1.5' }}>
+            {!loading && 'Pou ajoute yon kamera, itilize app ofisyèl Arlo a (iOS/Android) pou paire kamera a ak baz stasyon ou.'}
           </p>
           <button
             className="btn btn-secondary"

@@ -445,21 +445,36 @@ async function handleGetDevices(token) {
     });
     console.log(`[Arlo API] Total devices from Arlo: ${data.data.length}`);
 
-    const devices = data.data.map(d => ({
-      deviceId: d.deviceId,
-      deviceName: d.deviceName,
-      deviceType: d.deviceType,
-      modelId: d.modelId,
-      parentId: d.parentId,
-      uniqueId: d.uniqueId,
-      state: d.state,
-      properties: d.properties || {},
-      mediaObjectCount: d.mediaObjectCount,
-      xCloudId: d.xCloudId,
-      firmwareVersion: d.firmwareVersion,
-      interfaceVersion: d.interfaceVersion,
-      owner: d.owner
-    }));
+    const devices = data.data.map(d => {
+      // Normalize state: can be a string like "provisioned" or an object like {connectionState: "available"}
+      let normalizedState;
+      if (typeof d.state === 'string') {
+        // Map Arlo state strings to our connectionState format
+        const stateStr = d.state.toLowerCase();
+        const isOnline = stateStr === 'provisioned' || stateStr === 'online' || stateStr === 'available';
+        normalizedState = { connectionState: isOnline ? 'available' : 'offline', rawState: d.state };
+      } else if (d.state && typeof d.state === 'object') {
+        normalizedState = d.state;
+      } else {
+        normalizedState = { connectionState: 'unknown', rawState: String(d.state) };
+      }
+
+      return {
+        deviceId: d.deviceId,
+        deviceName: d.deviceName,
+        deviceType: d.deviceType,
+        modelId: d.modelId,
+        parentId: d.parentId,
+        uniqueId: d.uniqueId,
+        state: normalizedState,
+        properties: d.properties || {},
+        mediaObjectCount: d.mediaObjectCount,
+        xCloudId: d.xCloudId,
+        firmwareVersion: d.firmwareVersion,
+        interfaceVersion: d.interfaceVersion,
+        owner: d.owner
+      };
+    });
 
     const baseStations = devices.filter(d => isBaseStation(d.deviceType));
     const cameras = devices.filter(d => isCamera(d));
