@@ -374,6 +374,35 @@ async function handleFinishAuth(body) {
   }
 }
 
+// ─── Device type classification ───
+const BASE_STATION_TYPES = new Set([
+  'basestation', 'siren', 'hub', 'bridge'
+]);
+
+function isBaseStation(deviceType) {
+  if (!deviceType) return false;
+  const dt = deviceType.toLowerCase();
+  return BASE_STATION_TYPES.has(dt) || dt.includes('basestation') || dt.includes('hub');
+}
+
+function isCamera(device) {
+  if (!device.deviceType) return false;
+  const dt = device.deviceType.toLowerCase();
+  // Explicitly NOT a base station, siren, routerM1, etc.
+  if (isBaseStation(dt)) return false;
+  if (dt === 'siren' || dt === 'routerm1') return false;
+  // It's a camera if deviceType is 'camera', arloq, arloqs, doorbell, light,
+  // or anything else that has a parentId (child device = camera-like)
+  if (dt === 'camera' || dt.startsWith('arlo') || dt === 'doorbell' || dt === 'light' || dt === 'lights') {
+    return true;
+  }
+  // If it has a parentId, it's likely a child device (camera attached to base station)
+  if (device.parentId && device.parentId !== device.deviceId) {
+    return true;
+  }
+  return false;
+}
+
 // ─── Route: Get Devices ───
 async function handleGetDevices(token) {
   try {
@@ -385,7 +414,9 @@ async function handleGetDevices(token) {
 
     const dataText = await res.text();
     console.log(`[Arlo API] Devices status: ${res.status}`);
-    console.log(`[Arlo API] Devices body: ${dataText.substring(0, 500)}`);
+    // Log more of the response to see all devices
+    console.log(`[Arlo API] Devices body length: ${dataText.length}`);
+    console.log(`[Arlo API] Devices body: ${dataText.substring(0, 2000)}`);
 
     let data;
     try { data = JSON.parse(dataText); } catch (e) {
@@ -408,6 +439,12 @@ async function handleGetDevices(token) {
       return errorResponse('Repons aparèy pa bon. Eseye ankò.', 500);
     }
 
+    // Log each device type for debugging
+    data.data.forEach((d, i) => {
+      console.log(`[Arlo API] Device ${i}: id=${d.deviceId}, name=${d.deviceName}, type=${d.deviceType}, model=${d.modelId}, parent=${d.parentId}, state=${JSON.stringify(d.state?.connectionState)}`);
+    });
+    console.log(`[Arlo API] Total devices from Arlo: ${data.data.length}`);
+
     const devices = data.data.map(d => ({
       deviceId: d.deviceId,
       deviceName: d.deviceName,
@@ -420,17 +457,49 @@ async function handleGetDevices(token) {
       mediaObjectCount: d.mediaObjectCount,
       xCloudId: d.xCloudId,
       firmwareVersion: d.firmwareVersion,
-      interfaceVersion: d.interfaceVersion
+      interfaceVersion: d.interfaceVersion,
+      owner: d.owner
     }));
 
-    const baseStations = devices.filter(d =>
-      d.deviceType === 'basestation' || d.deviceType === 'siren'
-    );
-    const cameras = devices.filter(d => d.deviceType === 'camera');
+    const baseStations = devices.filter(d => isBaseStation(d.deviceType));
+    const cameras = devices.filter(d => isCamera(d));
+
+    console.log(`[Arlo API] Classified: ${baseStations.length} base stations, ${cameras.length} cameras, ${devices.length - baseStations.length - cameras.length} other`);
 
     return jsonResponse({ success: true, devices, baseStations, cameras });
   } catch (err) {
     return errorResponse('Erè jwenn aparèy: ' + err.message, 500);
+  }
+}
+
+// ─── Route: Get Raw Devices (debug) ───
+async function handleGetDevicesRaw(token) {
+  try {
+    const res = await arloFetch(`${ARLO_BASE}/v2/users/devices?t=${Date.now()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(token)
+    });
+    const data = await res.json();
+    // Return raw Arlo response for debugging
+    return jsonResponse({
+      success: true,
+      totalDevices: Array.isArray(data.data) ? data.data.length : 0,
+      rawDevices: Array.isArray(data.data) ? data.data.map(d => ({
+        deviceId: d.deviceId,
+        deviceName: d.deviceName,
+        deviceType: d.deviceType,
+        modelId: d.modelId,
+        parentId: d.parentId,
+        state: d.state,
+        xCloudId: d.xCloudId,
+        uniqueId: d.uniqueId,
+        owner: d.owner,
+        properties: d.properties
+      })) : data.data,
+      arloSuccess: data.success
+    });
+  } catch (err) {
+    return errorResponse('Debug devices error: ' + err.message, 500);
   }
 }
 
@@ -587,6 +656,7 @@ export default async function handler(req) {
 
     // Device routes
     if (path === '/devices' && method === 'GET') return handleGetDevices(token);
+    if (path === '/devices-raw' && method === 'GET') return handleGetDevicesRaw(token);
     if (path === '/modes' && method === 'GET') return handleGetModes(token);
     if (path === '/mode' && method === 'POST') return handleSetMode(token, body);
     if (path === '/snapshot' && method === 'POST') return handleSnapshot(token, body);
