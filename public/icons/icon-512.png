@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg512" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#141430"/>
+      <stop offset="100%" stop-color="#0a0a1a"/>
+    </radialGradient>
+    <linearGradient id="cam512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#0090cc"/>
+    </linearGradient>
+    <linearGradient id="lens512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="50%" stop-color="#0090cc"/>
+      <stop offset="100%" stop-color="#00d4ff"/>
+    </linearGradient>
+    <filter id="glow512" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="softglow512" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feFlood flood-color="#00d4ff" flood-opacity="0.15" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="colorblur"/>
+      <feComposite in="SourceGraphic" in2="colorblur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="url(#bg512)"/>
+
+  <!-- Outer ring -->
+  <circle cx="256" cy="256" r="250" fill="none" stroke="#00d4ff" stroke-opacity="0.1" stroke-width="2"/>
+
+  <!-- Inner decorative ring -->
+  <circle cx="256" cy="256" r="235" fill="none" stroke="#00d4ff" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Camera body group -->
+  <g filter="url(#softglow512)" transform="translate(256, 200)">
+    <!-- Camera body rounded rect -->
+    <rect x="-108" y="-60" width="216" height="130" rx="20" ry="20"
+          fill="none" stroke="url(#cam512)" stroke-width="7"/>
+
+    <!-- Inner body line detail -->
+    <rect x="-98" y="-50" width="196" height="110" rx="14" ry="14"
+          fill="none" stroke="#00d4ff" stroke-opacity="0.1" stroke-width="1"/>
+
+    <!-- Camera lens circle (outer) -->
+    <circle cx="0" cy="6" r="38" fill="none" stroke="url(#lens512)" stroke-width="6"/>
+
+    <!-- Camera lens circle (middle) -->
+    <circle cx="0" cy="6" r="26" fill="none" stroke="#00d4ff" stroke-width="3.5" stroke-opacity="0.5"/>
+
+    <!-- Camera lens circle (inner) -->
+    <circle cx="0" cy="6" r="16" fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-opacity="0.35"/>
+
+    <!-- Camera lens center dot -->
+    <circle cx="0" cy="6" r="7" fill="#00d4ff" fill-opacity="0.6"/>
+
+    <!-- Lens reflection highlight -->
+    <circle cx="-8" cy="-2" r="4" fill="#ffffff" fill-opacity="0.15"/>
+
+    <!-- Camera viewfinder bump -->
+    <path d="M -32,-60 L -22,-86 L 22,-86 L 32,-60"
+          fill="none" stroke="url(#cam512)" stroke-width="6.5" stroke-linejoin="round"/>
+
+    <!-- Viewfinder inner detail -->
+    <rect x="-16" y="-82" width="32" height="10" rx="3" ry="3"
+          fill="none" stroke="#00d4ff" stroke-opacity="0.2" stroke-width="1.5"/>
+
+    <!-- Flash -->
+    <circle cx="70" cy="-32" r="8" fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-opacity="0.5"/>
+    <circle cx="70" cy="-32" r="3.5" fill="#00d4ff" fill-opacity="0.4"/>
+
+    <!-- Recording indicator -->
+    <circle cx="-70" cy="-32" r="7" fill="#ff3b5c" fill-opacity="0.6"/>
+    <circle cx="-70" cy="-32" r="3.5" fill="#ff3b5c" fill-opacity="0.9"/>
+
+    <!-- Mode dial detail (right side) -->
+    <rect x="78" y="10" width="16" height="6" rx="3" ry="3"
+          fill="none" stroke="#00d4ff" stroke-opacity="0.25" stroke-width="1.5"/>
+
+    <!-- Grip lines (left side) -->
+    <line x1="-92" y1="20" x2="-92" y2="50" stroke="#00d4ff" stroke-opacity="0.12" stroke-width="1.5"/>
+    <line x1="-86" y1="20" x2="-86" y2="50" stroke="#00d4ff" stroke-opacity="0.12" stroke-width="1.5"/>
+    <line x1="-80" y1="20" x2="-80" y2="50" stroke="#00d4ff" stroke-opacity="0.12" stroke-width="1.5"/>
+  </g>
+
+  <!-- ARLO text -->
+  <text x="256" y="360" text-anchor="middle"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="48" font-weight="700" letter-spacing="14" fill="#00d4ff">
+    ARLO
+  </text>
+
+  <!-- Tagline -->
+  <text x="256" y="400" text-anchor="middle"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="18" font-weight="400" letter-spacing="6" fill="#ffffff" fill-opacity="0.35">
+    CAMERA
+  </text>
+
+  <!-- Bottom decorative dots -->
+  <circle cx="230" cy="430" r="2.5" fill="#00d4ff" fill-opacity="0.15"/>
+  <circle cx="248" cy="430" r="2.5" fill="#00d4ff" fill-opacity="0.25"/>
+  <circle cx="266" cy="430" r="2.5" fill="#00d4ff" fill-opacity="0.25"/>
+  <circle cx="284" cy="430" r="2.5" fill="#00d4ff" fill-opacity="0.15"/>
+</svg>
