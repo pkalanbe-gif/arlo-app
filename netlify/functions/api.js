@@ -847,6 +847,95 @@ async function handleLibrary(token, query) {
   }
 }
 
+// ─── Route: Debug session + subscribe ───
+async function handleDebugSession(token) {
+  const results = {};
+
+  // Test 1: Session v3 with plain token
+  try {
+    const r1 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
+      method: 'GET',
+      headers: getAuthHeaders(token)
+    });
+    const t1 = await r1.text();
+    results.sessionV3Plain = { status: r1.status, body: t1.substring(0, 500) };
+  } catch (e) { results.sessionV3Plain = { error: e.message }; }
+
+  // Test 2: Session v3 with base64 token
+  try {
+    const token64 = Buffer.from(token).toString('base64');
+    const r2 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
+      method: 'GET',
+      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Auth-Version': '2', 'schemaVersion': '1' }
+    });
+    const t2 = await r2.text();
+    results.sessionV3Base64 = { status: r2.status, body: t2.substring(0, 500) };
+  } catch (e) { results.sessionV3Base64 = { error: e.message }; }
+
+  // Test 3: Subscribe with plain token
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 3000);
+    const r3 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+      headers: { ...getAuthHeaders(token), 'Accept': 'text/event-stream' },
+      signal: ctrl.signal
+    });
+    results.subscribePlain = { status: r3.status, headers: Object.fromEntries(r3.headers.entries()) };
+    if (r3.ok && r3.body) {
+      const reader = r3.body.getReader();
+      const { value } = await reader.read();
+      const text = new TextDecoder().decode(value);
+      results.subscribePlain.firstChunk = text.substring(0, 300);
+      ctrl.abort();
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') results.subscribePlain = { ...results.subscribePlain, error: e.message };
+  }
+
+  // Test 4: Subscribe with base64 token
+  try {
+    const token64 = Buffer.from(token).toString('base64');
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 3000);
+    const r4 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token64)}`, {
+      method: 'GET',
+      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Accept': 'text/event-stream' },
+      signal: ctrl.signal
+    });
+    results.subscribeBase64 = { status: r4.status };
+    if (r4.ok && r4.body) {
+      const reader = r4.body.getReader();
+      const { value } = await reader.read();
+      const text = new TextDecoder().decode(value);
+      results.subscribeBase64.firstChunk = text.substring(0, 300);
+      ctrl.abort();
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') results.subscribeBase64 = { ...results.subscribeBase64, error: e.message };
+  }
+
+  // Test 5: startStream with base64 token
+  try {
+    const token64 = Buffer.from(token).toString('base64');
+    const r5 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
+      method: 'POST',
+      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Auth-Version': '2', 'schemaVersion': '1', 'xcloudId': 'MNHQP6N-2320-140-157366091' },
+      body: JSON.stringify({
+        from: 'GHFJTR-140-163814971_web', to: '5CX3977XA02A8',
+        action: 'set', resource: 'cameras/A0M19775A230C',
+        transId: `node!${Date.now()}`,
+        publishResponse: true, responseUrl: '',
+        properties: { activityState: 'startUserStream', cameraId: 'A0M19775A230C' }
+      })
+    });
+    const t5 = await r5.text();
+    results.startStreamBase64 = { status: r5.status, body: t5.substring(0, 500) };
+  } catch (e) { results.startStreamBase64 = { error: e.message }; }
+
+  return jsonResponse({ success: true, results, tokenLength: token.length, tokenStart: token.substring(0, 20) });
+}
+
 // ─── Route: Health check ───
 function handleHealth() {
   return jsonResponse({
@@ -899,6 +988,7 @@ export default async function handler(req) {
     // Device routes
     if (path === '/devices' && method === 'GET') return handleGetDevices(token);
     if (path === '/devices-raw' && method === 'GET') return handleGetDevicesRaw(token);
+    if (path === '/debug-session' && method === 'GET') return handleDebugSession(token);
     if (path === '/modes' && method === 'GET') return handleGetModes(token);
     if (path === '/mode' && method === 'POST') return handleSetMode(token, body);
     if (path === '/snapshot' && method === 'POST') return handleSnapshot(token, body);
