@@ -915,12 +915,42 @@ async function handleDebugSession(token) {
     if (e.name !== 'AbortError') results.subscribeBase64 = { ...results.subscribeBase64, error: e.message };
   }
 
-  // Test 5: startStream with base64 token
+  // Test 5: Session v1 (no version)
   try {
-    const token64 = Buffer.from(token).toString('base64');
-    const r5 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
+    const r5 = await arloFetch(`${ARLO_BASE}/users/session`, {
+      method: 'GET',
+      headers: getAuthHeaders(token)
+    });
+    const t5 = await r5.text();
+    results.sessionV1 = { status: r5.status, body: t5.substring(0, 500) };
+  } catch (e) { results.sessionV1 = { error: e.message }; }
+
+  // Test 6: Subscribe via SSE endpoint with ?token in URL only (no Auth header)
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 3000);
+    const r6 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+      headers: { 'Accept': 'text/event-stream' },
+      signal: ctrl.signal
+    });
+    results.subscribeTokenOnly = { status: r6.status };
+    if (r6.ok && r6.body) {
+      const reader = r6.body.getReader();
+      const { value } = await reader.read();
+      const text = new TextDecoder().decode(value);
+      results.subscribeTokenOnly.firstChunk = text.substring(0, 300);
+      ctrl.abort();
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') results.subscribeTokenOnly = { ...results.subscribeTokenOnly, error: e.message };
+  }
+
+  // Test 7: startStream WITHOUT Auth-Version header (legacy)
+  try {
+    const r7 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
       method: 'POST',
-      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Auth-Version': '2', 'schemaVersion': '1', 'xcloudId': 'MNHQP6N-2320-140-157366091' },
+      headers: { ...arloAuthHeaders(), 'Authorization': token, 'xcloudId': 'MNHQP6N-2320-140-157366091' },
       body: JSON.stringify({
         from: 'GHFJTR-140-163814971_web', to: '5CX3977XA02A8',
         action: 'set', resource: 'cameras/A0M19775A230C',
@@ -929,9 +959,9 @@ async function handleDebugSession(token) {
         properties: { activityState: 'startUserStream', cameraId: 'A0M19775A230C' }
       })
     });
-    const t5 = await r5.text();
-    results.startStreamBase64 = { status: r5.status, body: t5.substring(0, 500) };
-  } catch (e) { results.startStreamBase64 = { error: e.message }; }
+    const t7 = await r7.text();
+    results.startStreamNoAuthVersion = { status: r7.status, body: t7.substring(0, 500) };
+  } catch (e) { results.startStreamNoAuthVersion = { error: e.message }; }
 
   return jsonResponse({ success: true, results, tokenLength: token.length, tokenStart: token.substring(0, 20) });
 }
