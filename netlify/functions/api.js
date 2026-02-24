@@ -7,48 +7,49 @@ import { randomUUID } from 'crypto';
 const ARLO_BASE = 'https://myapi.arlo.com/hmsweb';
 const ARLO_AUTH_HOST = 'https://ocapi-app.arlo.com';
 
-// Generate a persistent device ID per function instance
-const DEVICE_ID = randomUUID();
+// Default device ID (overridden by client-sent device ID for consistency)
+const DEFAULT_DEVICE_ID = randomUUID();
 
 // In-memory session cache (per function instance)
 let sessions = {};
 
 // ─── Helper: Auth headers for Arlo API ───
-function arloAuthHeaders(extraHeaders = {}) {
+// deviceId parameter allows frontend to send a consistent device ID
+function arloAuthHeaders(extraHeaders = {}, deviceId = null) {
   return {
     'Content-Type': 'application/json',
     'User-Agent': '(iPhone15,2 18_1_1) iOS Arlo 5.4.3',
     'Origin': 'https://my.arlo.com',
     'Referer': 'https://my.arlo.com/',
     'Source': 'arloCamWeb',
-    'X-User-Device-Id': DEVICE_ID,
+    'X-User-Device-Id': deviceId || DEFAULT_DEVICE_ID,
     'X-User-Device-Type': 'BROWSER',
     ...extraHeaders
   };
 }
 
 // ─── Helper: Make request to Arlo API ───
-async function arloFetch(url, options = {}) {
+async function arloFetch(url, options = {}, deviceId = null) {
   const res = await fetch(url, {
     ...options,
-    headers: arloAuthHeaders(options.headers || {})
+    headers: arloAuthHeaders(options.headers || {}, deviceId)
   });
   return res;
 }
 
 // ─── Helper: Get auth headers with token (for ocapi-app.arlo.com — token is base64) ───
-function getAuthHeadersBase64(token) {
+function getAuthHeadersBase64(token, deviceId = null) {
   const token64 = Buffer.from(token).toString('base64');
   return {
-    ...arloAuthHeaders(),
+    ...arloAuthHeaders({}, deviceId),
     'Authorization': token64
   };
 }
 
 // ─── Helper: Get headers for regular API (myapi.arlo.com — token is plain) ───
-function getAuthHeaders(token) {
+function getAuthHeaders(token, deviceId = null) {
   return {
-    ...arloAuthHeaders(),
+    ...arloAuthHeaders({}, deviceId),
     'Authorization': token,
     'Auth-Version': '2',
     'schemaVersion': '1'
@@ -56,13 +57,13 @@ function getAuthHeaders(token) {
 }
 
 // ─── Helper: Validate token + create session ───
-async function validateAndCreateSession(token) {
+async function validateAndCreateSession(token, deviceId = null) {
+  console.log(`[Arlo API] Validating access token with deviceId: ${deviceId || 'default'}...`);
   // Step 1: Validate the access token
-  console.log('[Arlo API] Validating access token...');
   const validateRes = await arloFetch(`${ARLO_AUTH_HOST}/api/validateAccessToken?data=${Date.now()}`, {
     method: 'GET',
     headers: { 'Authorization': Buffer.from(token).toString('base64') }
-  });
+  }, deviceId);
   const validateText = await validateRes.text();
   console.log(`[Arlo API] validateToken status: ${validateRes.status}`);
   console.log(`[Arlo API] validateToken body: ${validateText.substring(0, 300)}`);
@@ -78,8 +79,8 @@ async function validateAndCreateSession(token) {
   try {
     const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
     const sessionText = await sessionRes.text();
     console.log(`[Arlo API] Session v3 status: ${sessionRes.status}`);
     console.log(`[Arlo API] Session v3 body: ${sessionText.substring(0, 500)}`);
@@ -90,8 +91,8 @@ async function validateAndCreateSession(token) {
       console.warn('[Arlo API] Session v3 failed, trying v2...');
       const sessionRes2 = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
         method: 'GET',
-        headers: getAuthHeaders(token)
-      });
+        headers: getAuthHeaders(token, deviceId)
+      }, deviceId);
       const sessionText2 = await sessionRes2.text();
       console.log(`[Arlo API] Session v2 status: ${sessionRes2.status}`);
       console.log(`[Arlo API] Session v2 body: ${sessionText2.substring(0, 500)}`);
@@ -109,7 +110,7 @@ async function validateAndCreateSession(token) {
 // ─── CORS Headers ───
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Arlo-Token',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Arlo-Token, X-Arlo-Device-Id',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Content-Type': 'application/json'
 };
@@ -124,7 +125,7 @@ function errorResponse(message, status = 500) {
 }
 
 // ─── Route: Login to Arlo (Step 1) ───
-async function handleLogin(body) {
+async function handleLogin(body, deviceId = null) {
   const { email, password } = body;
   if (!email || !password) {
     return errorResponse('Email ak password obligatwa', 400);
@@ -135,7 +136,7 @@ async function handleLogin(body) {
     const encodedPassword = Buffer.from(password).toString('base64');
 
     console.log(`[Arlo API] Login attempt for: ${email}`);
-    console.log(`[Arlo API] Using Device-Id: ${DEVICE_ID}`);
+    console.log(`[Arlo API] Using Device-Id: ${deviceId || DEFAULT_DEVICE_ID}`);
 
     const authRes = await arloFetch(`${ARLO_AUTH_HOST}/api/auth`, {
       method: 'POST',
@@ -145,7 +146,7 @@ async function handleLogin(body) {
         language: 'en',
         EnvSource: 'prod'
       })
-    });
+    }, deviceId);
 
     const authText = await authRes.text();
     console.log(`[Arlo API] Auth status: ${authRes.status}`);
@@ -184,7 +185,7 @@ async function handleLogin(body) {
     if (authCompleted === true) {
       // Validate token and create session
       console.log(`[Arlo API] Auth completed, validating token...`);
-      const validation = await validateAndCreateSession(token);
+      const validation = await validateAndCreateSession(token, deviceId);
       if (!validation.success) {
         return jsonResponse({
           success: false,
@@ -209,7 +210,7 @@ async function handleLogin(body) {
       const factorsRes = await arloFetch(`${ARLO_AUTH_HOST}/api/getFactors?data=${Date.now()}`, {
         method: 'GET',
         headers: { 'Authorization': token64 }
-      });
+      }, deviceId);
       const factorsData = await factorsRes.json();
       console.log(`[Arlo API] Inline getFactors status: ${factorsRes.status}`);
       console.log(`[Arlo API] Inline getFactors body: ${JSON.stringify(factorsData).substring(0, 500)}`);
@@ -249,7 +250,7 @@ async function handleLogin(body) {
 }
 
 // ─── Route: Get 2FA Factors (Step 2) ───
-async function handleGetFactors(body) {
+async function handleGetFactors(body, deviceId = null) {
   const { token, userId } = body;
   if (!token || !userId) {
     return errorResponse('Token ak userId obligatwa', 400);
@@ -260,7 +261,7 @@ async function handleGetFactors(body) {
     const res = await arloFetch(`${ARLO_AUTH_HOST}/api/getFactors?data=${Date.now()}`, {
       method: 'GET',
       headers: { 'Authorization': token64 }
-    });
+    }, deviceId);
 
     const data = await res.json();
     console.log(`[Arlo API] getFactors status: ${res.status}`);
@@ -292,7 +293,7 @@ async function handleGetFactors(body) {
 }
 
 // ─── Route: Start 2FA Auth (Step 3 — sends code to email/SMS) ───
-async function handleStartAuth(body) {
+async function handleStartAuth(body, deviceId = null) {
   const { token, factorId, userId } = body;
   if (!token || !factorId) {
     return errorResponse('Token ak factorId obligatwa', 400);
@@ -304,7 +305,7 @@ async function handleStartAuth(body) {
       method: 'POST',
       headers: { 'Authorization': token64 },
       body: JSON.stringify({ factorId })
-    });
+    }, deviceId);
 
     const data = await res.json();
     console.log(`[Arlo API] startAuth status: ${res.status}`);
@@ -329,7 +330,7 @@ async function handleStartAuth(body) {
 }
 
 // ─── Route: Finish 2FA Auth (Step 4 — validate OTP code) ───
-async function handleFinishAuth(body) {
+async function handleFinishAuth(body, deviceId = null) {
   const { token, factorAuthCode, otp } = body;
   if (!token || !factorAuthCode || !otp) {
     return errorResponse('Token, factorAuthCode ak OTP obligatwa', 400);
@@ -345,7 +346,7 @@ async function handleFinishAuth(body) {
         otp,
         isBrowserTrusted: true
       })
-    });
+    }, deviceId);
 
     const data = await res.json();
     console.log(`[Arlo API] finishAuth status: ${res.status}`);
@@ -363,7 +364,7 @@ async function handleFinishAuth(body) {
 
     // Validate token and create session
     console.log(`[Arlo API] 2FA done, validating token and creating session...`);
-    const validation = await validateAndCreateSession(finalToken);
+    const validation = await validateAndCreateSession(finalToken, deviceId);
     if (!validation.success) {
       return jsonResponse({
         success: false,
@@ -416,13 +417,13 @@ function isCamera(device) {
 }
 
 // ─── Route: Get Devices ───
-async function handleGetDevices(token) {
+async function handleGetDevices(token, deviceId = null) {
   try {
     console.log(`[Arlo API] Getting devices with token: ${token.substring(0, 30)}...`);
     const res = await arloFetch(`${ARLO_BASE}/v2/users/devices?t=${Date.now()}`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
 
     const dataText = await res.text();
     console.log(`[Arlo API] Devices status: ${res.status}`);
@@ -500,12 +501,12 @@ async function handleGetDevices(token) {
 }
 
 // ─── Route: Get Raw Devices (debug) ───
-async function handleGetDevicesRaw(token) {
+async function handleGetDevicesRaw(token, deviceId = null) {
   try {
     const res = await arloFetch(`${ARLO_BASE}/v2/users/devices?t=${Date.now()}`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
     const data = await res.json();
     // Return raw Arlo response for debugging
     return jsonResponse({
@@ -531,12 +532,12 @@ async function handleGetDevicesRaw(token) {
 }
 
 // ─── Route: Get Modes ───
-async function handleGetModes(token) {
+async function handleGetModes(token, deviceId = null) {
   try {
     const res = await arloFetch(`${ARLO_BASE}/users/automation/definitions?uniqueIds=all`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
     const data = await res.json();
     return jsonResponse({ success: true, modes: data.data || [] });
   } catch (err) {
@@ -545,20 +546,20 @@ async function handleGetModes(token) {
 }
 
 // ─── Route: Set Mode (Arm/Disarm) ───
-async function handleSetMode(token, body) {
+async function handleSetMode(token, body, clientDId = null) {
   const { deviceId, xCloudId, mode, userId } = body;
   try {
     const webId = userId ? `${userId}_web` : `${deviceId}_web`;
     const transId = `node!${Date.now()}`;
     const res = await arloFetch(`${ARLO_BASE}/users/devices/automation/active`, {
       method: 'POST',
-      headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+      headers: { ...getAuthHeaders(token, clientDId), 'xcloudId': xCloudId },
       body: JSON.stringify({
         from: webId, to: deviceId,
         action: 'set', resource: 'modes', transId,
         publishResponse: true, responseUrl: '', properties: { active: mode }
       })
-    });
+    }, clientDId);
     const data = await res.json();
     return jsonResponse({ success: data.success !== false, data: data.data });
   } catch (err) {
@@ -567,7 +568,7 @@ async function handleSetMode(token, body) {
 }
 
 // ─── Route: Take Snapshot ───
-async function handleSnapshot(token, body) {
+async function handleSnapshot(token, body, clientDId = null) {
   const { deviceId, parentId, xCloudId, userId } = body;
   const webId = userId ? `${userId}_web` : `${parentId}_web`;
   console.log(`[Arlo API] Snapshot request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}, from=${webId}`);
@@ -582,14 +583,14 @@ async function handleSnapshot(token, body) {
     // Step 1: Request snapshot from base station
     const res = await arloFetch(`${ARLO_BASE}/users/devices/fullFrameSnapshot`, {
       method: 'POST',
-      headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+      headers: { ...getAuthHeaders(token, clientDId), 'xcloudId': xCloudId },
       body: JSON.stringify({
         from: webId, to: parentId,
         action: 'set', resource: `cameras/${deviceId}`, transId,
         publishResponse: true, responseUrl: '',
         properties: { activityState: 'fullFrameSnapshot' }
       })
-    });
+    }, clientDId);
 
     const dataText = await res.text();
     console.log(`[Arlo API] Snapshot status: ${res.status}`);
@@ -611,8 +612,8 @@ async function handleSnapshot(token, body) {
       // Fetch the device to get the latest image URL
       const devRes = await arloFetch(`${ARLO_BASE}/users/devices?t=${Date.now()}`, {
         method: 'GET',
-        headers: getAuthHeaders(token)
-      });
+        headers: getAuthHeaders(token, clientDId)
+      }, clientDId);
       const devData = await devRes.json();
 
       if (Array.isArray(devData.data)) {
@@ -641,10 +642,10 @@ async function handleSnapshot(token, body) {
 
 // ─── Route: Start Stream ───
 // Strategy: Open SSE subscribe, send notify to start stream, read stream URL from SSE events
-async function handleStream(token, body) {
+async function handleStream(token, body, clientDId = null) {
   const { deviceId, parentId, xCloudId, userId } = body;
   const webId = userId ? `${userId}_web` : `${parentId}_web`;
-  console.log(`[Arlo API] Stream request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}, from=${webId}`);
+  console.log(`[Arlo API] Stream request: camera=${deviceId}, parent=${parentId}, xCloudId=${xCloudId}, from=${webId}, deviceId=${clientDId || 'default'}`);
 
   if (!deviceId || !parentId || !xCloudId) {
     return errorResponse('deviceId, parentId, ak xCloudId obligatwa pou stream', 400);
@@ -662,7 +663,7 @@ async function handleStream(token, body) {
         const sseRes = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
           method: 'GET',
           headers: {
-            ...getAuthHeaders(token),
+            ...getAuthHeaders(token, clientDId),
             'Accept': 'text/event-stream'
           },
           signal: sseController.signal
@@ -729,14 +730,14 @@ async function handleStream(token, body) {
     const transId = `node!${Date.now()}`;
     const notifyRes = await arloFetch(`${ARLO_BASE}/users/devices/notify/${parentId}`, {
       method: 'POST',
-      headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+      headers: { ...getAuthHeaders(token, clientDId), 'xcloudId': xCloudId },
       body: JSON.stringify({
         from: webId, to: parentId,
         action: 'set', resource: `cameras/${deviceId}`, transId,
         publishResponse: true, responseUrl: '',
         properties: { activityState: 'startUserStream', cameraId: deviceId }
       })
-    });
+    }, clientDId);
     const notifyText = await notifyRes.text();
     console.log(`[Arlo API] Notify status: ${notifyRes.status}`);
     console.log(`[Arlo API] Notify body: ${notifyText.substring(0, 500)}`);
@@ -778,7 +779,7 @@ async function handleStream(token, body) {
     console.log('[Arlo API] No URL from SSE, trying startStream directly...');
     const res = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
       method: 'POST',
-      headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+      headers: { ...getAuthHeaders(token, clientDId), 'xcloudId': xCloudId },
       body: JSON.stringify({
         from: webId, to: parentId,
         action: 'set', resource: `cameras/${deviceId}`,
@@ -786,7 +787,7 @@ async function handleStream(token, body) {
         publishResponse: true, responseUrl: '',
         properties: { activityState: 'startUserStream', cameraId: deviceId }
       })
-    });
+    }, clientDId);
 
     const dataText = await res.text();
     console.log(`[Arlo API] startStream status: ${res.status}`);
@@ -824,7 +825,7 @@ async function handleStream(token, body) {
 }
 
 // ─── Route: Get Library (Recordings) ───
-async function handleLibrary(token, query) {
+async function handleLibrary(token, query, deviceId = null) {
   try {
     const now = new Date();
     const from = query.from || new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -834,12 +835,12 @@ async function handleLibrary(token, query) {
 
     const res = await arloFetch(`${ARLO_BASE}/users/library`, {
       method: 'POST',
-      headers: getAuthHeaders(token),
+      headers: getAuthHeaders(token, deviceId),
       body: JSON.stringify({
         dateFrom: `${yearFrom}${monthFrom}${dayFrom}`,
         dateTo: `${yearTo}${monthTo}${dayTo}`
       })
-    });
+    }, deviceId);
     const data = await res.json();
     return jsonResponse({ success: true, recordings: data.data || [] });
   } catch (err) {
@@ -848,15 +849,15 @@ async function handleLibrary(token, query) {
 }
 
 // ─── Route: Debug session + subscribe ───
-async function handleDebugSession(token) {
+async function handleDebugSession(token, deviceId = null) {
   const results = {};
 
-  // Test 1: Session v3 with plain token
+  // Test 1: Session v3 with plain token + consistent deviceId
   try {
     const r1 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
     const t1 = await r1.text();
     results.sessionV3Plain = { status: r1.status, body: t1.substring(0, 500) };
   } catch (e) { results.sessionV3Plain = { error: e.message }; }
@@ -866,8 +867,8 @@ async function handleDebugSession(token) {
     const token64 = Buffer.from(token).toString('base64');
     const r2 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
       method: 'GET',
-      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Auth-Version': '2', 'schemaVersion': '1' }
-    });
+      headers: { ...arloAuthHeaders({}, deviceId), 'Authorization': token64, 'Auth-Version': '2', 'schemaVersion': '1' }
+    }, deviceId);
     const t2 = await r2.text();
     results.sessionV3Base64 = { status: r2.status, body: t2.substring(0, 500) };
   } catch (e) { results.sessionV3Base64 = { error: e.message }; }
@@ -878,7 +879,7 @@ async function handleDebugSession(token) {
     setTimeout(() => ctrl.abort(), 3000);
     const r3 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
       method: 'GET',
-      headers: { ...getAuthHeaders(token), 'Accept': 'text/event-stream' },
+      headers: { ...getAuthHeaders(token, deviceId), 'Accept': 'text/event-stream' },
       signal: ctrl.signal
     });
     results.subscribePlain = { status: r3.status, headers: Object.fromEntries(r3.headers.entries()) };
@@ -900,7 +901,7 @@ async function handleDebugSession(token) {
     setTimeout(() => ctrl.abort(), 3000);
     const r4 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token64)}`, {
       method: 'GET',
-      headers: { ...arloAuthHeaders(), 'Authorization': token64, 'Accept': 'text/event-stream' },
+      headers: { ...arloAuthHeaders({}, deviceId), 'Authorization': token64, 'Accept': 'text/event-stream' },
       signal: ctrl.signal
     });
     results.subscribeBase64 = { status: r4.status };
@@ -915,92 +916,22 @@ async function handleDebugSession(token) {
     if (e.name !== 'AbortError') results.subscribeBase64 = { ...results.subscribeBase64, error: e.message };
   }
 
-  // Test 5: Session v1 (no version)
+  // Test 5: Session v2
   try {
-    const r5 = await arloFetch(`${ARLO_BASE}/users/session`, {
+    const r5 = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
       method: 'GET',
-      headers: getAuthHeaders(token)
-    });
+      headers: getAuthHeaders(token, deviceId)
+    }, deviceId);
     const t5 = await r5.text();
-    results.sessionV1 = { status: r5.status, body: t5.substring(0, 500) };
-  } catch (e) { results.sessionV1 = { error: e.message }; }
-
-  // Test 6: Subscribe via SSE endpoint with ?token in URL only (no Auth header)
-  try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 3000);
-    const r6 = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
-      method: 'GET',
-      headers: { 'Accept': 'text/event-stream' },
-      signal: ctrl.signal
-    });
-    results.subscribeTokenOnly = { status: r6.status };
-    if (r6.ok && r6.body) {
-      const reader = r6.body.getReader();
-      const { value } = await reader.read();
-      const text = new TextDecoder().decode(value);
-      results.subscribeTokenOnly.firstChunk = text.substring(0, 300);
-      ctrl.abort();
-    }
-  } catch (e) {
-    if (e.name !== 'AbortError') results.subscribeTokenOnly = { ...results.subscribeTokenOnly, error: e.message };
-  }
-
-  // Test 7: startStream WITHOUT Auth-Version header (legacy)
-  try {
-    const r7 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
-      method: 'POST',
-      headers: { ...arloAuthHeaders(), 'Authorization': token, 'xcloudId': 'MNHQP6N-2320-140-157366091' },
-      body: JSON.stringify({
-        from: 'GHFJTR-140-163814971_web', to: '5CX3977XA02A8',
-        action: 'set', resource: 'cameras/A0M19775A230C',
-        transId: `node!${Date.now()}`,
-        publishResponse: true, responseUrl: '',
-        properties: { activityState: 'startUserStream', cameraId: 'A0M19775A230C' }
-      })
-    });
-    const t7 = await r7.text();
-    results.startStreamNoAuthVersion = { status: r7.status, body: t7.substring(0, 500) };
-  } catch (e) { results.startStreamNoAuthVersion = { error: e.message }; }
-
-  // Test 8: Session v3 with Auth-Version: 1
-  try {
-    const r8 = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
-      method: 'GET',
-      headers: { ...arloAuthHeaders(), 'Authorization': token, 'Auth-Version': '1' }
-    });
-    const t8 = await r8.text();
-    results.sessionV3AuthV1 = { status: r8.status, body: t8.substring(0, 500) };
-  } catch (e) { results.sessionV3AuthV1 = { error: e.message }; }
-
-  // Test 9: startStream with Auth-Version: 1
-  try {
-    const r9 = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
-      method: 'POST',
-      headers: { ...arloAuthHeaders(), 'Authorization': token, 'Auth-Version': '1', 'xcloudId': 'MNHQP6N-2320-140-157366091' },
-      body: JSON.stringify({
-        from: 'GHFJTR-140-163814971_web', to: '5CX3977XA02A8',
-        action: 'set', resource: 'cameras/A0M19775A230C',
-        transId: `node!${Date.now()}`,
-        publishResponse: true, responseUrl: '',
-        properties: { activityState: 'startUserStream', cameraId: 'A0M19775A230C' }
-      })
-    });
-    const t9 = await r9.text();
-    results.startStreamAuthV1 = { status: r9.status, body: t9.substring(0, 500) };
-  } catch (e) { results.startStreamAuthV1 = { error: e.message }; }
-
-  // Test 10: Session v2
-  try {
-    const r10 = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
-      method: 'GET',
-      headers: getAuthHeaders(token)
-    });
-    const t10 = await r10.text();
-    results.sessionV2 = { status: r10.status, body: t10.substring(0, 500) };
+    results.sessionV2 = { status: r5.status, body: t5.substring(0, 500) };
   } catch (e) { results.sessionV2 = { error: e.message }; }
 
-  return jsonResponse({ success: true, results, tokenLength: token.length, tokenStart: token.substring(0, 20) });
+  return jsonResponse({
+    success: true, results,
+    tokenLength: token.length,
+    tokenStart: token.substring(0, 20),
+    deviceIdUsed: deviceId || DEFAULT_DEVICE_ID
+  });
 }
 
 // ─── Route: Health check ───
@@ -1008,7 +939,7 @@ function handleHealth() {
   return jsonResponse({
     status: 'ok',
     message: 'Arlo Camera PWA API',
-    deviceId: DEVICE_ID,
+    deviceId: DEFAULT_DEVICE_ID,
     timestamp: new Date().toISOString()
   });
 }
@@ -1031,6 +962,10 @@ export default async function handler(req) {
   console.log(`[Arlo API] ${method} ${rawPath} → path: "${path}"`);
 
   const token = req.headers.get('x-arlo-token') || req.headers.get('authorization');
+  // Use consistent device ID from frontend (stored in localStorage) for session binding
+  const clientDeviceId = req.headers.get('x-arlo-device-id');
+  console.log(`[Arlo API] Client Device-Id: ${clientDeviceId || 'none (using server default)'}`);
+
 
   let body = {};
   if (method === 'POST' || method === 'PUT') {
@@ -1044,23 +979,23 @@ export default async function handler(req) {
     if (path === '/' || path === '/health') return handleHealth();
 
     // ─── Auth routes (no token needed for login) ───
-    if (path === '/login' && method === 'POST') return handleLogin(body);
-    if (path === '/get-factors' && method === 'POST') return handleGetFactors(body);
-    if (path === '/start-auth' && method === 'POST') return handleStartAuth(body);
-    if (path === '/finish-auth' && method === 'POST') return handleFinishAuth(body);
+    if (path === '/login' && method === 'POST') return handleLogin(body, clientDeviceId);
+    if (path === '/get-factors' && method === 'POST') return handleGetFactors(body, clientDeviceId);
+    if (path === '/start-auth' && method === 'POST') return handleStartAuth(body, clientDeviceId);
+    if (path === '/finish-auth' && method === 'POST') return handleFinishAuth(body, clientDeviceId);
 
     // All other routes need token
     if (!token) return errorResponse('Token obligatwa. Konekte avan.', 401);
 
     // Device routes
-    if (path === '/devices' && method === 'GET') return handleGetDevices(token);
-    if (path === '/devices-raw' && method === 'GET') return handleGetDevicesRaw(token);
-    if (path === '/debug-session' && method === 'GET') return handleDebugSession(token);
-    if (path === '/modes' && method === 'GET') return handleGetModes(token);
-    if (path === '/mode' && method === 'POST') return handleSetMode(token, body);
-    if (path === '/snapshot' && method === 'POST') return handleSnapshot(token, body);
-    if (path === '/stream' && method === 'POST') return handleStream(token, body);
-    if (path === '/library' && method === 'GET') return handleLibrary(token, query);
+    if (path === '/devices' && method === 'GET') return handleGetDevices(token, clientDeviceId);
+    if (path === '/devices-raw' && method === 'GET') return handleGetDevicesRaw(token, clientDeviceId);
+    if (path === '/debug-session' && method === 'GET') return handleDebugSession(token, clientDeviceId);
+    if (path === '/modes' && method === 'GET') return handleGetModes(token, clientDeviceId);
+    if (path === '/mode' && method === 'POST') return handleSetMode(token, body, clientDeviceId);
+    if (path === '/snapshot' && method === 'POST') return handleSnapshot(token, body, clientDeviceId);
+    if (path === '/stream' && method === 'POST') return handleStream(token, body, clientDeviceId);
+    if (path === '/library' && method === 'GET') return handleLibrary(token, query, clientDeviceId);
 
     return errorResponse('Route pa egziste: ' + path, 404);
   } catch (err) {

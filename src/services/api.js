@@ -3,6 +3,23 @@ import axios from 'axios';
 
 const API_BASE = '/api';
 
+// ─── Persistent Device ID ───
+// Arlo binds session/token to a specific device ID.
+// This must be the same across all requests for the session to work.
+function getDeviceId() {
+  let deviceId = localStorage.getItem('arlo_device_id');
+  if (!deviceId) {
+    deviceId = crypto.randomUUID ? crypto.randomUUID() :
+      'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    localStorage.setItem('arlo_device_id', deviceId);
+    console.log('[Arlo API] Generated new device ID:', deviceId);
+  }
+  return deviceId;
+}
+
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE,
@@ -10,12 +27,14 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 });
 
-// Add token to all requests
+// Add token AND device ID to all requests
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('arlo_token');
   if (token) {
     config.headers['X-Arlo-Token'] = token;
   }
+  // Always send the persistent device ID
+  config.headers['X-Arlo-Device-Id'] = getDeviceId();
   return config;
 });
 
