@@ -81,12 +81,18 @@ async function handleLogin(body) {
     }
 
     if (!authRes.ok || !authData.data) {
-      // Return 200 with success:false so frontend 401-interceptor doesn't interfere
+      // Translate common Arlo errors to Creole
+      const arloMsg = authData.message || authData.meta?.message || '';
+      const errorMap = {
+        'Password not correct': 'Password pa kòrèk. Tcheke password ou.',
+        'User not found': 'Kont sa pa egziste. Tcheke email ou.',
+        'Too many attempts': 'Twòp esè. Tann kèk minit epi eseye ankò.',
+        'Account locked': 'Kont ou bloke. Ale sou my.arlo.com pou debloke li.'
+      };
+      const friendlyMsg = errorMap[arloMsg] || arloMsg || `Login echwe (${authRes.status}). Verifye email/password ou.`;
       return jsonResponse({
         success: false,
-        error: authData.message || authData.meta?.message || `Login echwe (${authRes.status}). Verifye email/password ou.`,
-        arloStatus: authRes.status,
-        arloMessage: authData.message || authData.meta?.message || null
+        error: friendlyMsg
       });
     }
 
