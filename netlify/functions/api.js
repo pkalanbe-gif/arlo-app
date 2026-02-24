@@ -72,19 +72,23 @@ async function validateAndCreateSession(token) {
     return { success: false, error: 'Token validation failed' };
   }
 
-  // Step 2: Create v2 session
-  console.log('[Arlo API] Creating v2 session...');
-  const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v3`, {
-    method: 'GET',
-    headers: getAuthHeaders(token)
-  });
-  const sessionText = await sessionRes.text();
-  console.log(`[Arlo API] Session status: ${sessionRes.status}`);
-  console.log(`[Arlo API] Session body: ${sessionText.substring(0, 300)}`);
+  // Step 2: Create session — try v2, if it fails just proceed (token is already valid)
+  console.log('[Arlo API] Creating session...');
+  try {
+    const sessionRes = await arloFetch(`${ARLO_BASE}/users/session/v2`, {
+      method: 'GET',
+      headers: getAuthHeaders(token)
+    });
+    const sessionText = await sessionRes.text();
+    console.log(`[Arlo API] Session status: ${sessionRes.status}`);
+    console.log(`[Arlo API] Session body: ${sessionText.substring(0, 300)}`);
 
-  if (sessionRes.status !== 200) {
-    console.error('[Arlo API] Session creation failed');
-    return { success: false, error: 'Session creation failed' };
+    if (sessionRes.status !== 200) {
+      // Session creation failed but token is validated — proceed anyway
+      console.warn('[Arlo API] Session creation failed, but token is valid. Proceeding...');
+    }
+  } catch (sessionErr) {
+    console.warn('[Arlo API] Session creation error (non-fatal):', sessionErr.message);
   }
 
   return { success: true };
