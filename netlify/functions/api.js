@@ -640,6 +640,7 @@ async function handleSnapshot(token, body) {
 }
 
 // ─── Route: Start Stream ───
+// Strategy: Open SSE subscribe, send notify to start stream, read stream URL from SSE events
 async function handleStream(token, body) {
   const { deviceId, parentId, xCloudId, userId } = body;
   const webId = userId ? `${userId}_web` : `${parentId}_web`;
@@ -650,32 +651,83 @@ async function handleStream(token, body) {
   }
 
   try {
-    // Step 1: Open a brief SSE subscribe connection to register as a listener
-    // Arlo requires an active event stream before startStream will work
-    console.log('[Arlo API] Opening subscribe connection...');
-    const subscribeController = new AbortController();
-    const subscribeTimeout = setTimeout(() => subscribeController.abort(), 8000);
+    // Step 1: Open SSE subscribe connection to receive events
+    console.log('[Arlo API] Opening SSE subscribe connection...');
+    const sseController = new AbortController();
+    let streamUrl = null;
+    let sseEvents = [];
 
-    const subscribeFetch = fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
-      method: 'GET',
-      headers: {
-        ...getAuthHeaders(token),
-        'Accept': 'text/event-stream'
-      },
-      signal: subscribeController.signal
-    }).catch(err => {
-      if (err.name !== 'AbortError') {
-        console.warn('[Arlo API] Subscribe error (non-fatal):', err.message);
+    const ssePromise = (async () => {
+      try {
+        const sseRes = await fetch(`${ARLO_BASE}/client/subscribe?token=${encodeURIComponent(token)}`, {
+          method: 'GET',
+          headers: {
+            ...getAuthHeaders(token),
+            'Accept': 'text/event-stream'
+          },
+          signal: sseController.signal
+        });
+
+        console.log(`[Arlo API] SSE status: ${sseRes.status}`);
+
+        if (!sseRes.ok || !sseRes.body) {
+          console.warn(`[Arlo API] SSE connection failed: ${sseRes.status}`);
+          return;
+        }
+
+        // Read the SSE stream for events
+        const reader = sseRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          console.log(`[Arlo API] SSE chunk: ${buffer.substring(0, 500)}`);
+
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const eventData = line.substring(6).trim();
+              if (eventData) {
+                try {
+                  const parsed = JSON.parse(eventData);
+                  sseEvents.push(parsed);
+                  console.log(`[Arlo API] SSE event: ${JSON.stringify(parsed).substring(0, 300)}`);
+
+                  // Look for stream URL in the event
+                  if (parsed.properties?.url || parsed.url) {
+                    streamUrl = parsed.properties?.url || parsed.url;
+                    console.log(`[Arlo API] SSE stream URL found: ${streamUrl}`);
+                    sseController.abort();
+                    return;
+                  }
+                } catch (e) {
+                  // Not JSON, skip
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.warn('[Arlo API] SSE error:', err.message);
+        }
       }
-    });
+    })();
 
-    // Wait for subscribe to register
-    await new Promise(r => setTimeout(r, 2000));
-    console.log('[Arlo API] Subscribe connection opened, sending startStream...');
+    // Wait for SSE to connect
+    await new Promise(r => setTimeout(r, 1500));
 
-    // Step 2: Send startStream command
+    // Step 2: Send notify to start the stream (notify works, startStream returns 500)
+    console.log('[Arlo API] Sending notify to start stream...');
     const transId = `node!${Date.now()}`;
-    const res = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
+    const notifyRes = await arloFetch(`${ARLO_BASE}/users/devices/notify/${parentId}`, {
       method: 'POST',
       headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
       body: JSON.stringify({
@@ -685,83 +737,86 @@ async function handleStream(token, body) {
         properties: { activityState: 'startUserStream', cameraId: deviceId }
       })
     });
+    const notifyText = await notifyRes.text();
+    console.log(`[Arlo API] Notify status: ${notifyRes.status}`);
+    console.log(`[Arlo API] Notify body: ${notifyText.substring(0, 500)}`);
+
+    // Step 3: Wait for SSE to deliver the stream URL (up to 8 seconds)
+    console.log('[Arlo API] Waiting for stream URL from SSE events...');
+    const sseTimeout = setTimeout(() => {
+      console.log('[Arlo API] SSE timeout, aborting...');
+      sseController.abort();
+    }, 8000);
+
+    await Promise.race([
+      ssePromise,
+      new Promise(r => setTimeout(r, 8500))
+    ]);
+    clearTimeout(sseTimeout);
+    sseController.abort();
+
+    console.log(`[Arlo API] SSE events received: ${sseEvents.length}`);
+    console.log(`[Arlo API] Stream URL from SSE: ${streamUrl || 'null'}`);
+
+    // If we got a URL from SSE, return it
+    if (streamUrl) {
+      let streamType = 'unknown';
+      if (streamUrl.startsWith('rtsps://') || streamUrl.startsWith('rtsp://')) streamType = 'rtsp';
+      else if (streamUrl.includes('.m3u8')) streamType = 'hls';
+      else if (streamUrl.startsWith('https://')) streamType = 'https';
+
+      return jsonResponse({
+        success: true,
+        url: streamUrl,
+        streamType,
+        method: 'sse-notify',
+        sseEventsCount: sseEvents.length
+      });
+    }
+
+    // Step 4: If no URL from SSE, also try startStream directly as last resort
+    console.log('[Arlo API] No URL from SSE, trying startStream directly...');
+    const res = await arloFetch(`${ARLO_BASE}/users/devices/startStream`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
+      body: JSON.stringify({
+        from: webId, to: parentId,
+        action: 'set', resource: `cameras/${deviceId}`,
+        transId: `node!${Date.now()}`,
+        publishResponse: true, responseUrl: '',
+        properties: { activityState: 'startUserStream', cameraId: deviceId }
+      })
+    });
 
     const dataText = await res.text();
-    console.log(`[Arlo API] Stream status: ${res.status}`);
-    console.log(`[Arlo API] Stream body: ${dataText.substring(0, 1000)}`);
-
-    // Clean up subscribe connection
-    clearTimeout(subscribeTimeout);
-    subscribeController.abort();
+    console.log(`[Arlo API] startStream status: ${res.status}`);
+    console.log(`[Arlo API] startStream body: ${dataText.substring(0, 1000)}`);
 
     let data;
     try { data = JSON.parse(dataText); } catch (e) {
       return errorResponse('Arlo retounen repons ki pa JSON pou stream', 500);
     }
 
-    // Check for Arlo error
-    if (data.data?.error || data.error) {
-      const errMsg = data.data?.message || data.data?.reason || data.message || 'Arlo erè stream';
-      const errCode = data.data?.error || data.error;
-      console.error(`[Arlo API] Stream Arlo error: code=${errCode}, msg=${errMsg}`);
+    const directUrl = data.data?.url || null;
+    if (directUrl) {
+      let streamType = 'unknown';
+      if (directUrl.startsWith('rtsps://') || directUrl.startsWith('rtsp://')) streamType = 'rtsp';
+      else if (directUrl.includes('.m3u8')) streamType = 'hls';
+      else if (directUrl.startsWith('https://')) streamType = 'https';
 
-      // If subscribe+startStream failed, try the notify endpoint as fallback
-      console.log('[Arlo API] Trying notify endpoint as fallback...');
-      const notifyRes = await arloFetch(`${ARLO_BASE}/users/devices/notify/${parentId}`, {
-        method: 'POST',
-        headers: { ...getAuthHeaders(token), 'xcloudId': xCloudId },
-        body: JSON.stringify({
-          from: webId, to: parentId,
-          action: 'set', resource: `cameras/${deviceId}`,
-          transId: `node!${Date.now()}`,
-          publishResponse: true, responseUrl: '',
-          properties: { activityState: 'startUserStream', cameraId: deviceId }
-        })
-      });
-      const notifyText = await notifyRes.text();
-      console.log(`[Arlo API] Notify status: ${notifyRes.status}`);
-      console.log(`[Arlo API] Notify body: ${notifyText.substring(0, 1000)}`);
-
-      let notifyData;
-      try { notifyData = JSON.parse(notifyText); } catch (e) {
-        return errorResponse(`Stream echwe: ${errMsg}`, 500);
-      }
-
-      if (notifyData.data?.url) {
-        const nUrl = notifyData.data.url;
-        let nType = 'unknown';
-        if (nUrl.startsWith('rtsps://') || nUrl.startsWith('rtsp://')) nType = 'rtsp';
-        else if (nUrl.includes('.m3u8')) nType = 'hls';
-        else if (nUrl.startsWith('https://')) nType = 'https';
-
-        return jsonResponse({ success: true, url: nUrl, streamType: nType, data: notifyData.data, method: 'notify' });
-      }
-
-      return errorResponse(`Stream echwe: ${errMsg} (code: ${errCode})`, 500);
+      return jsonResponse({ success: true, url: directUrl, streamType, method: 'startStream' });
     }
 
-    const streamUrl = data.data?.url || null;
-    console.log(`[Arlo API] Stream URL: ${streamUrl || 'null'}`);
-
-    // Detect stream type for the frontend
-    let streamType = 'unknown';
-    if (streamUrl) {
-      if (streamUrl.startsWith('rtsps://') || streamUrl.startsWith('rtsp://')) {
-        streamType = 'rtsp';
-      } else if (streamUrl.includes('.m3u8')) {
-        streamType = 'hls';
-      } else if (streamUrl.startsWith('https://')) {
-        streamType = 'https';
-      }
-    }
-
+    // Return error with all debug info
+    const errMsg = data.data?.message || data.message || 'Pa ka jwenn URL stream';
     return jsonResponse({
-      success: true,
-      url: streamUrl,
-      streamType,
-      data: data.data,
-      method: 'startStream'
-    });
+      success: false,
+      error: `Stream: ${errMsg}`,
+      sseEventsCount: sseEvents.length,
+      sseEvents: sseEvents.map(e => JSON.stringify(e).substring(0, 200)),
+      notifySuccess: notifyRes.status === 200,
+      startStreamStatus: res.status
+    }, 500);
   } catch (err) {
     console.error('[Arlo API] Stream error:', err.message);
     return errorResponse('Erè start stream: ' + err.message, 500);
